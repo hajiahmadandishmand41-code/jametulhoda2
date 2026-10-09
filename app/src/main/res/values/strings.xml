@@ -3,6 +3,8 @@
     <string name="app_subtitle">سامانه آموزشی و اطلاع‌رسانی</string>
     <string name="no_internet_title">عدم برقراری ارتباط با اینترنت</string>
     <string name="no_internet_desc">لطفاً اتصال اینترنت، وای‌فای یا داده تلفن همراه خود را بررسی کرده و مجدداً تلاش نمایید.</string>
+    <string name="web_error_title">بارگذاری صفحه ناموفق بود</string>
+    <string name="web_error_desc">ارتباط با وب‌سایت برقرار نشد یا سرور پاسخ مناسبی نداد. اتصال را بررسی کنید و دوباره تلاش نمایید.</string>
     <string name="retry">تلاش مجدد</string>
     <string name="home">صفحه اصلی</string>
     <string name="refresh">تازه‌سازی</string>
