@@ -1,0 +1,6 @@
+{
+  "name": "جامعة الهدی",
+  "description": "اپلیکیشن رسمی و کاربردی جامعة الهدی (Jametul Hoda) برای دسترسی آسان به سامانه، ورود کاربران، مطالب آموزشی و فرهنگی با طراحی واکنش‌گرا",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

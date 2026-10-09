@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">جامعة الهدی</string>
+    <string name="app_subtitle">سامانه آموزشی و اطلاع‌رسانی</string>
+    <string name="no_internet_title">عدم برقراری ارتباط با اینترنت</string>
+    <string name="no_internet_desc">لطفاً اتصال اینترنت، وای‌فای یا داده تلفن همراه خود را بررسی کرده و مجدداً تلاش نمایید.</string>
+    <string name="retry">تلاش مجدد</string>
+    <string name="home">صفحه اصلی</string>
+    <string name="refresh">تازه‌سازی</string>
+    <string name="back">بازگشت</string>
+    <string name="forward">جلو</string>
+    <string name="share">اشتراک‌گذاری</string>
+    <string name="exit_confirm">برای خروج از برنامه، یک بار دیگر دکمه بازگشت را لمس کنید.</string>
+    <string name="loading">در حال بارگذاری…</string>
+    <string name="download_started">دانلود فایل آغاز شد…</string>
+    <string name="external_link_open">باز کردن در مرورگر خارجی</string>
+    <string name="settings">تنظیمات</string>
+    <string name="clear_cache">پاکسازی حافظه موقت</string>
+    <string name="cache_cleared">حافظه موقت پاک شد</string>
+    <string name="about_app">درباره برنامه</string>
+    <string name="site_url">https://jametulhoda.vercel.app/</string>
+</resources>
