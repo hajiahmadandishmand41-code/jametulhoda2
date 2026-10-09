@@ -45,6 +45,7 @@ import com.example.R
 fun NoInternetView(
     onRetry: () -> Unit,
     onLoadCache: (() -> Unit)? = null,
+    isOffline: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -67,7 +68,7 @@ fun NoInternetView(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.WifiOff,
+                    imageVector = if (isOffline) Icons.Default.WifiOff else Icons.Default.Refresh,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(48.dp)
@@ -77,7 +78,7 @@ fun NoInternetView(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = stringResource(R.string.no_internet_title),
+                text = stringResource(if (isOffline) R.string.no_internet_title else R.string.web_error_title),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -87,7 +88,7 @@ fun NoInternetView(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = stringResource(R.string.no_internet_desc),
+                text = stringResource(if (isOffline) R.string.no_internet_desc else R.string.web_error_desc),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
