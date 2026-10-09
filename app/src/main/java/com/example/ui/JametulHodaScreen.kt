@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.net.http.SslError
 import android.os.Environment
 import android.os.SystemClock
 import android.webkit.CookieManager
@@ -15,6 +16,8 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.SslErrorHandler
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -218,9 +221,9 @@ fun JametulHodaScreen() {
                                 setSupportZoom(true)
                                 builtInZoomControls = true
                                 displayZoomControls = false
-                                allowFileAccess = true
+                                allowFileAccess = false
                                 allowContentAccess = true
-                                mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                                 cacheMode = if (isOnline) {
                                     WebSettings.LOAD_DEFAULT
                                 } else {
@@ -302,7 +305,6 @@ fun JametulHodaScreen() {
                                     request: WebResourceRequest?
                                 ): Boolean {
                                     val uri = request?.url ?: return false
-                                    val urlString = uri.toString()
                                     val scheme = uri.scheme?.lowercase()
 
                                     // External protocols (calls, emails, telegram, whatsapp)
@@ -318,10 +320,10 @@ fun JametulHodaScreen() {
 
                                     // Let internal site & common login/auth endpoints load inside WebView
                                     val host = uri.host?.lowercase() ?: ""
-                                    val isAllowedDomain = host.contains("jametulhoda.vercel.app") ||
-                                            host.contains("vercel.app") ||
-                                            host.contains("accounts.google.com") ||
-                                            host.contains("firebaseapp.com")
+                                    val isAllowedDomain = host == "jametulhoda.vercel.app" ||
+                                            host == "accounts.google.com" ||
+                                            host == "firebaseapp.com" ||
+                                            host.endsWith(".firebaseapp.com")
 
                                     if (isAllowedDomain) {
                                         return false
@@ -359,13 +361,37 @@ fun JametulHodaScreen() {
                                     error: WebResourceError?
                                 ) {
                                     if (request?.isForMainFrame == true) {
-                                        // Ignore net errors if offline cache worked or minor
-                                        if (!isOnline) {
-                                            hasError = true
-                                        } else {
-                                            hasError = true
-                                        }
+                                        hasError = true
                                         isLoading = false
+                                        isInitialLoading = false
+                                    }
+                                }
+
+                                override fun onReceivedHttpError(
+                                    view: WebView?,
+                                    request: WebResourceRequest?,
+                                    errorResponse: WebResourceResponse?
+                                ) {
+                                    if (request?.isForMainFrame == true &&
+                                        (errorResponse?.statusCode ?: 0) >= 500
+                                    ) {
+                                        hasError = true
+                                        isLoading = false
+                                        isInitialLoading = false
+                                    }
+                                }
+
+                                override fun onReceivedSslError(
+                                    view: WebView?,
+                                    handler: SslErrorHandler?,
+                                    error: SslError?
+                                ) {
+                                    // Never bypass certificate validation errors.
+                                    handler?.cancel()
+                                    if (error?.url == view?.url) {
+                                        hasError = true
+                                        isLoading = false
+                                        isInitialLoading = false
                                     }
                                 }
                             }
@@ -384,17 +410,23 @@ fun JametulHodaScreen() {
                 )
 
                 // Error / Offline Screen
-                if (hasError && !isOnline) {
+                if (hasError) {
                     NoInternetView(
+                        isOffline = !isOnline,
                         onRetry = {
                             hasError = false
                             isLoading = true
                             webViewInstance?.reload()
                         },
-                        onLoadCache = {
-                            hasError = false
-                            webViewInstance?.settings?.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
-                            webViewInstance?.reload()
+                        onLoadCache = if (!isOnline) {
+                            {
+                                hasError = false
+                                isLoading = true
+                                webViewInstance?.settings?.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
+                                webViewInstance?.reload()
+                            }
+                        } else {
+                            null
                         }
                     )
                 }
@@ -459,6 +491,19 @@ fun JametulHodaScreen() {
                         }
                     }
                 }
+            }
+        }
+
+        DisposableEffect(Unit) {
+            onDispose {
+                filePathCallback?.onReceiveValue(null)
+                filePathCallback = null
+                webViewInstance?.let { webView ->
+                    webView.stopLoading()
+                    webView.webChromeClient = null
+                    webView.destroy()
+                }
+                webViewInstance = null
             }
         }
 
