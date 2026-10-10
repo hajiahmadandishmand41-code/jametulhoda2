@@ -68,7 +68,8 @@ private data class HomeSection(
     val key: String,
     val title: String,
     val destination: FeedTab,
-    val items: List<FeedItem>
+    val items: List<FeedItem>,
+    val totalCount: Int
 )
 
 private object FeedRepository {
@@ -292,20 +293,36 @@ private fun MainFeed(
     onRetry: () -> Unit, onOpen: (FeedItem) -> Unit, onSelectTab: (FeedTab) -> Unit
 ) {
     val homeSections = remember(items) {
-        listOf(
-            HomeSection("news", "خبرها و اطلاعیه‌های تازه", FeedTab.NEWS,
-                items.filter { it.type in setOf("news", "announcement", "event") }.take(2)),
-            HomeSection("research", "مقاله‌ها و پژوهش‌ها", FeedTab.RESEARCH,
-                items.filter { it.type in setOf("article", "research", "report", "speech", "qa", "program") }.take(2)),
-            HomeSection("books", "کتابخانه", FeedTab.BOOKS,
-                items.filter { it.type == "book" }.take(2)),
-            HomeSection("lessons", "درس‌ها و مجموعه‌های آموزشی", FeedTab.MORE,
-                items.filter { it.type in setOf("course", "lesson") }.take(2)),
-            HomeSection("media", "صوت و ویدیو", FeedTab.MORE,
-                items.filter { it.type in setOf("audio", "video") }.take(2)),
-            HomeSection("topics", "موضوعات علمی", FeedTab.MORE,
-                items.filter { it.type == "topic" }.take(2))
-        ).filter { it.items.isNotEmpty() }
+        fun section(
+            key: String,
+            title: String,
+            destination: FeedTab,
+            matching: List<FeedItem>
+        ): HomeSection? {
+            if (matching.isEmpty()) return null
+            return HomeSection(
+                key = key,
+                title = title,
+                destination = destination,
+                items = matching.take(2),
+                totalCount = matching.size
+            )
+        }
+
+        listOfNotNull(
+            section("news", "خبرها و اطلاعیه‌های تازه", FeedTab.NEWS,
+                items.filter { it.type in setOf("news", "announcement", "event") }),
+            section("research", "مقاله‌ها و پژوهش‌ها", FeedTab.RESEARCH,
+                items.filter { it.type in setOf("article", "research", "report", "speech", "qa", "program") }),
+            section("books", "کتابخانه", FeedTab.BOOKS,
+                items.filter { it.type == "book" }),
+            section("lessons", "درس‌ها و مجموعه‌های آموزشی", FeedTab.MORE,
+                items.filter { it.type in setOf("course", "lesson") }),
+            section("media", "صوت و ویدیو", FeedTab.MORE,
+                items.filter { it.type in setOf("audio", "video") }),
+            section("topics", "موضوعات علمی", FeedTab.MORE,
+                items.filter { it.type == "topic" })
+        )
     }
 
     LazyColumn(
@@ -324,7 +341,7 @@ private fun MainFeed(
                     item(key = "section-title-${section.key}") {
                         SectionHeading(
                             title = section.title,
-                            count = section.items.size,
+                            count = section.totalCount,
                             onViewAll = { onSelectTab(section.destination) }
                         )
                     }
