@@ -159,7 +159,7 @@ fun NativeFeedScreen() {
                 FeedTab.MORE -> false
             }
             val q = search.trim()
-            tabMatch && (q.isBlank() || item.title.contains(q, true) || item.summary.contains(q, true) || item.author.contains(q, true))
+            tabMatch && (q.isBlank() || item.title.contains(q, true) || item.summary.contains(q, true) || item.content.contains(q, true) || item.author.contains(q, true))
         }
     }
 
