@@ -64,6 +64,12 @@ private data class FeedItem(
 )
 private data class FeedData(val items: List<FeedItem>, val raw: String)
 private enum class FeedTab(val label: String) { HOME("خانه"), NEWS("اخبار"), RESEARCH("پژوهش"), BOOKS("کتابخانه"), MORE("بیشتر") }
+private data class HomeSection(
+    val key: String,
+    val title: String,
+    val destination: FeedTab,
+    val items: List<FeedItem>
+)
 
 private object FeedRepository {
     fun cached(context: Context): FeedData? {
@@ -203,6 +209,7 @@ fun NativeFeedScreen() {
                     modifier = Modifier.padding(padding), items = visible, tab = tab,
                     hasCached = feed.isNotEmpty(), loading = loading, error = error,
                     query = search, onRetry = { refresh() }, onOpen = { selected = it },
+                    onSelectTab = { destination -> tab = destination; search = ""; searchShown = false },
                 )
             }
         }
@@ -282,20 +289,81 @@ private fun NativeNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
 private fun MainFeed(
     modifier: Modifier, items: List<FeedItem>, tab: FeedTab, hasCached: Boolean,
     loading: Boolean, error: String?, query: String,
-    onRetry: () -> Unit, onOpen: (FeedItem) -> Unit
+    onRetry: () -> Unit, onOpen: (FeedItem) -> Unit, onSelectTab: (FeedTab) -> Unit
 ) {
+    val homeSections = remember(items) {
+        listOf(
+            HomeSection("news", "خبرها و اطلاعیه‌های تازه", FeedTab.NEWS,
+                items.filter { it.type in setOf("news", "announcement", "event") }.take(2)),
+            HomeSection("research", "مقاله‌ها و پژوهش‌ها", FeedTab.RESEARCH,
+                items.filter { it.type in setOf("article", "research", "report", "speech", "qa", "program") }.take(2)),
+            HomeSection("books", "کتابخانه", FeedTab.BOOKS,
+                items.filter { it.type == "book" }.take(2)),
+            HomeSection("lessons", "درس‌ها و مجموعه‌های آموزشی", FeedTab.MORE,
+                items.filter { it.type in setOf("course", "lesson") }.take(2)),
+            HomeSection("media", "صوت و ویدیو", FeedTab.MORE,
+                items.filter { it.type in setOf("audio", "video") }.take(2)),
+            HomeSection("topics", "موضوعات علمی", FeedTab.MORE,
+                items.filter { it.type == "topic" }.take(2))
+        ).filter { it.items.isNotEmpty() }
+    }
+
     LazyColumn(
-        modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(13.dp, 14.dp, 13.dp, 20.dp),
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(13.dp, 14.dp, 13.dp, 22.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { IntroCard(tab = tab, count = items.size) }
         if (!error.isNullOrBlank()) item { StatusCard(error, !hasCached, onRetry) }
-        if (items.isEmpty()) item { EmptyCard(loading, query.isNotBlank(), tab, onRetry) }
-        else items(items, key = { it.id }) { row -> PostCard(row) { onOpen(row) } }
+
+        if (tab == FeedTab.HOME && query.isBlank()) {
+            if (homeSections.isEmpty()) {
+                item { EmptyCard(loading, false, tab, onRetry) }
+            } else {
+                homeSections.forEach { section ->
+                    item(key = "section-title-${section.key}") {
+                        SectionHeading(
+                            title = section.title,
+                            count = section.items.size,
+                            onViewAll = { onSelectTab(section.destination) }
+                        )
+                    }
+                    items(section.items, key = { "${section.key}-${it.id}" }) { row ->
+                        PostCard(row) { onOpen(row) }
+                    }
+                }
+            }
+        } else {
+            if (items.isEmpty()) item { EmptyCard(loading, query.isNotBlank(), tab, onRetry) }
+            else items(items, key = { "${tab.name}-${it.id}" }) { row -> PostCard(row) { onOpen(row) } }
+        }
+
         item {
-            Text("نمایش بومی • محتوای عمومی و منتشرشده", Modifier.fillMaxWidth().padding(6.dp),
+            Text(
+                "نمایش بومی • محتوای عمومی و منتشرشده",
+                Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
                 color = JhdMuted, style = MaterialTheme.typography.labelSmall,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun SectionHeading(title: String, count: Int, onViewAll: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, color = Color(0xFF203A30), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("$count مطلب تازه", color = JhdMuted, style = MaterialTheme.typography.labelSmall)
+        }
+        TextButton(onClick = onViewAll, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)) {
+            Text("مشاهدهٔ همه", color = JhdGreen, style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Default.ArrowForward, contentDescription = null, tint = JhdGreen, modifier = Modifier.size(15.dp))
         }
     }
 }
