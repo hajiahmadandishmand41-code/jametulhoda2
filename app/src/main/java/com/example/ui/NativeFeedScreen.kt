@@ -12,6 +12,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -189,8 +190,11 @@ fun NativeFeedScreen() {
                 )
                 tab == FeedTab.MORE -> MorePage(
                     modifier = Modifier.padding(padding),
+                    items = feed.filter { it.type in setOf("course", "lesson", "topic", "audio", "video") },
+                    loading = loading,
                     onSite = { openExternal(context, "https://jametulhoda.vercel.app/") },
-                    onRefresh = { refresh() }
+                    onRefresh = { refresh() },
+                    onOpen = { selected = it }
                 )
                 else -> MainFeed(
                     modifier = Modifier.padding(padding), items = visible, tab = tab,
@@ -414,9 +418,44 @@ private fun StatusCard(message: String, showRetry: Boolean, onRetry: () -> Unit)
 }
 
 @Composable
-private fun MorePage(modifier: Modifier, onSite: () -> Unit, onRefresh: () -> Unit) {
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(15.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { IntroCard(FeedTab.MORE, 0) }
+private fun MorePage(
+    modifier: Modifier,
+    items: List<FeedItem>,
+    loading: Boolean,
+    onSite: () -> Unit,
+    onRefresh: () -> Unit,
+    onOpen: (FeedItem) -> Unit
+) {
+    var selectedType by remember { mutableStateOf("all") }
+    val filters = listOf(
+        "all" to "همه",
+        "lesson" to "درس‌ها",
+        "course" to "دوره‌ها",
+        "topic" to "موضوعات",
+        "audio" to "صوت",
+        "video" to "ویدیو"
+    )
+    val visibleItems = remember(items, selectedType) {
+        if (selectedType == "all") items else items.filter { it.type == selectedType }
+    }
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(13.dp, 14.dp, 13.dp, 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { IntroCard(FeedTab.MORE, visibleItems.size) }
+        item {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(filters, key = { it.first }) { filter ->
+                    FilterChip(
+                        selected = selectedType == filter.first,
+                        onClick = { selectedType = filter.first },
+                        label = { Text(filter.second) }
+                    )
+                }
+            }
+        }
+        if (visibleItems.isEmpty()) {
+            item { EmptyCard(loading, false, FeedTab.MORE, onRefresh) }
+        } else {
+            items(visibleItems, key = { it.id }) { item -> PostCard(item) { onOpen(item) } }
+        }
         item { MoreCard("وب‌سایت رسمی جامعه‌الهدی", "برای دسترسی به همهٔ صفحه‌ها و اطلاعات تکمیلی، وب‌سایت رسمی را باز کنید.", "باز کردن وب‌سایت", onSite) }
         item { MoreCard("تازه‌سازی محتوا", "آخرین فید موفق در تلفن نگهداری می‌شود تا متن‌های قبلی هنگام قطع اینترنت در دسترس بماند.", "تلاش برای به‌روزرسانی", onRefresh) }
         item {
@@ -488,7 +527,9 @@ private fun readableDate(value: String): String = value.takeIf { it.isNotBlank()
 private fun typeLabel(type: String): String = when (type.lowercase(Locale.ROOT)) {
     "news" -> "خبر"; "announcement" -> "اطلاعیه"; "event" -> "رویداد"
     "article" -> "مقاله"; "research" -> "پژوهش"; "report" -> "گزارش"; "speech" -> "سخنرانی"
-    "program" -> "برنامه"; "qa" -> "پرسش‌وپاسخ"; "book" -> "کتاب"; else -> "مطلب"
+    "program" -> "برنامه"; "qa" -> "پرسش‌وپاسخ"; "book" -> "کتاب"
+    "course" -> "دوره"; "lesson" -> "درس"; "topic" -> "موضوع"; "audio" -> "صوت"; "video" -> "ویدیو"
+    else -> "مطلب"
 }
 private fun openExternal(context: Context, value: String) {
     if (!value.startsWith("https://", true)) {
