@@ -46,9 +46,17 @@ android {
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
+      // Internal test APK; not suitable for Play Store publication.
       signingConfig = signingConfigs.getByName("debugConfig")
+    }
+    lite {
+      // Minified benchmark build for testing the sub-10 MB goal.
+      // Separate package/debug signing: never publish this variant to Google Play.
+      initWith(getByName("release"))
+      applicationIdSuffix = ".lite"
+      versionNameSuffix = "-lite"
+      signingConfig = signingConfigs.getByName("debugConfig")
+      matchingFallbacks += listOf("release")
     }
   }
   compileOptions {
@@ -81,12 +89,8 @@ dependencies {
   implementation(libs.androidx.compose.material3)
   implementation(libs.androidx.compose.ui)
   implementation(libs.androidx.compose.ui.graphics)
-  implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
   // implementation(libs.androidx.datastore.preferences)
-  implementation(libs.androidx.lifecycle.runtime.compose)
-  implementation(libs.androidx.lifecycle.runtime.ktx)
-  implementation(libs.androidx.lifecycle.viewmodel.compose)
   // implementation(libs.androidx.navigation.compose)
   // implementation(libs.coil.compose)
   // Uncomment to use Firestore:
