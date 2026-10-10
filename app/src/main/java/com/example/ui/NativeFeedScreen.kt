@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -25,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -58,10 +60,17 @@ private val JhdMuted = Color(0xFF68776F)
 private data class FeedItem(
     val id: String, val source: String, val type: String, val title: String,
     val summary: String, val content: String, val author: String,
-    val date: String, val url: String, val image: String
+    val collection: String, val date: String, val url: String, val image: String
 )
 private data class FeedData(val items: List<FeedItem>, val raw: String)
 private enum class FeedTab(val label: String) { HOME("خانه"), NEWS("اخبار"), RESEARCH("پژوهش"), BOOKS("کتابخانه"), MORE("بیشتر") }
+private data class HomeSection(
+    val key: String,
+    val title: String,
+    val destination: FeedTab,
+    val items: List<FeedItem>,
+    val totalCount: Int
+)
 
 private object FeedRepository {
     fun cached(context: Context): FeedData? {
@@ -98,8 +107,9 @@ private object FeedRepository {
                     id = row.optString("id", "item-$i"), source = row.optString("source", "website"),
                     type = row.optString("type", "news"), title = title, summary = summary,
                     content = row.optString("content", summary).trim().ifBlank { summary },
-                    author = row.optString("author").trim(), date = row.optString("created_at").trim(),
-                    url = row.optString("url").trim(), image = row.optString("image_url").trim()
+                    author = row.optString("author").trim(), collection = row.optString("collection_title").trim(),
+                    date = row.optString("created_at").trim(), url = row.optString("url").trim(),
+                    image = row.optString("image_url").trim()
                 ))
             }
         }
@@ -150,7 +160,7 @@ fun NativeFeedScreen() {
                 FeedTab.MORE -> false
             }
             val q = search.trim()
-            tabMatch && (q.isBlank() || item.title.contains(q, true) || item.summary.contains(q, true) || item.author.contains(q, true))
+            tabMatch && (q.isBlank() || item.title.contains(q, true) || item.summary.contains(q, true) || item.content.contains(q, true) || item.author.contains(q, true))
         }
     }
 
@@ -200,6 +210,7 @@ fun NativeFeedScreen() {
                     modifier = Modifier.padding(padding), items = visible, tab = tab,
                     hasCached = feed.isNotEmpty(), loading = loading, error = error,
                     query = search, onRetry = { refresh() }, onOpen = { selected = it },
+                    onSelectTab = { destination -> tab = destination; search = ""; searchShown = false },
                 )
             }
         }
@@ -279,20 +290,97 @@ private fun NativeNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
 private fun MainFeed(
     modifier: Modifier, items: List<FeedItem>, tab: FeedTab, hasCached: Boolean,
     loading: Boolean, error: String?, query: String,
-    onRetry: () -> Unit, onOpen: (FeedItem) -> Unit
+    onRetry: () -> Unit, onOpen: (FeedItem) -> Unit, onSelectTab: (FeedTab) -> Unit
 ) {
+    val homeSections = remember(items) {
+        fun section(
+            key: String,
+            title: String,
+            destination: FeedTab,
+            matching: List<FeedItem>
+        ): HomeSection? {
+            if (matching.isEmpty()) return null
+            return HomeSection(
+                key = key,
+                title = title,
+                destination = destination,
+                items = matching.take(2),
+                totalCount = matching.size
+            )
+        }
+
+        listOfNotNull(
+            section("news", "خبرها و اطلاعیه‌های تازه", FeedTab.NEWS,
+                items.filter { it.type in setOf("news", "announcement", "event") }),
+            section("research", "مقاله‌ها و پژوهش‌ها", FeedTab.RESEARCH,
+                items.filter { it.type in setOf("article", "research", "report", "speech", "qa", "program") }),
+            section("books", "کتابخانه", FeedTab.BOOKS,
+                items.filter { it.type == "book" }),
+            section("lessons", "درس‌ها و مجموعه‌های آموزشی", FeedTab.MORE,
+                items.filter { it.type in setOf("course", "lesson") }),
+            section("media", "صوت و ویدیو", FeedTab.MORE,
+                items.filter { it.type in setOf("audio", "video") }),
+            section("topics", "موضوعات علمی", FeedTab.MORE,
+                items.filter { it.type == "topic" })
+        )
+    }
+
     LazyColumn(
-        modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(13.dp, 14.dp, 13.dp, 20.dp),
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(13.dp, 14.dp, 13.dp, 22.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { IntroCard(tab = tab, count = items.size) }
         if (!error.isNullOrBlank()) item { StatusCard(error, !hasCached, onRetry) }
-        if (items.isEmpty()) item { EmptyCard(loading, query.isNotBlank(), tab, onRetry) }
-        else items(items, key = { it.id }) { row -> PostCard(row) { onOpen(row) } }
+
+        if (tab == FeedTab.HOME && query.isBlank()) {
+            if (homeSections.isEmpty()) {
+                item { EmptyCard(loading, false, tab, onRetry) }
+            } else {
+                homeSections.forEach { section ->
+                    item(key = "section-title-${section.key}") {
+                        SectionHeading(
+                            title = section.title,
+                            count = section.totalCount,
+                            onViewAll = { onSelectTab(section.destination) }
+                        )
+                    }
+                    items(section.items, key = { "${section.key}-${it.id}" }) { row ->
+                        PostCard(row) { onOpen(row) }
+                    }
+                }
+            }
+        } else {
+            if (items.isEmpty()) item { EmptyCard(loading, query.isNotBlank(), tab, onRetry) }
+            else items(items, key = { "${tab.name}-${it.id}" }) { row -> PostCard(row) { onOpen(row) } }
+        }
+
         item {
-            Text("نمایش بومی • محتوای عمومی و منتشرشده", Modifier.fillMaxWidth().padding(6.dp),
+            Text(
+                "نمایش بومی • محتوای عمومی و منتشرشده",
+                Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
                 color = JhdMuted, style = MaterialTheme.typography.labelSmall,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+    }
+}
+
+@Composable
+private fun SectionHeading(title: String, count: Int, onViewAll: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, color = Color(0xFF203A30), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("$count مطلب تازه", color = JhdMuted, style = MaterialTheme.typography.labelSmall)
+        }
+        TextButton(onClick = onViewAll, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)) {
+            Text("مشاهدهٔ همه", color = JhdGreen, style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Default.ArrowForward, contentDescription = null, tint = JhdGreen, modifier = Modifier.size(15.dp))
         }
     }
 }
@@ -337,32 +425,247 @@ private fun IntroCard(tab: FeedTab, count: Int) {
 
 @Composable
 private fun PostCard(item: FeedItem, onOpen: () -> Unit) {
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(19.dp), colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(1.dp)) {
+    when (item.type.lowercase(Locale.ROOT)) {
+        "news", "announcement", "event" -> NewsCard(item, onOpen)
+        "article", "research", "report", "speech", "program", "qa" -> ReadingCard(item, onOpen)
+        "book" -> BookCard(item, onOpen)
+        "course", "lesson" -> LessonCard(item, onOpen)
+        "topic" -> TopicCard(item, onOpen)
+        "audio", "video" -> MediaCard(item, onOpen)
+        else -> GeneralContentCard(item, onOpen)
+    }
+}
+
+@Composable
+private fun NewsCard(item: FeedItem, onOpen: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
         Column {
-            Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Image(
-                    painter = painterResource(R.drawable.ic_jametulhoda_logo),
-                    contentDescription = "لوگوی جامعه‌الهدی",
-                    modifier = Modifier.size(39.dp).clip(CircleShape).padding(3.dp),
-                    contentScale = ContentScale.Fit
-                )
-                Column(Modifier.weight(1f)) {
-                    Text("جامعه‌الهدی", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-                    val byline = listOf(item.author, readableDate(item.date)).filter { it.isNotBlank() }.joinToString(" • ")
-                    Text(byline.ifBlank { typeLabel(item.type) }, color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (item.image.isNotBlank()) {
+                FeedImage(item.image, item.title, Modifier.fillMaxWidth().height(178.dp), Icons.Default.Article)
+            } else {
+                Box(
+                    Modifier.fillMaxWidth().height(62.dp).background(JhdPale),
+                    contentAlignment = Alignment.CenterEnd
+                ) {
+                    Icon(Icons.Default.Campaign, contentDescription = null, tint = JhdGreen, modifier = Modifier.padding(end = 20.dp).size(31.dp))
                 }
-                Text(typeLabel(item.type), Modifier.clip(RoundedCornerShape(8.dp)).background(JhdPale).padding(horizontal = 7.dp, vertical = 4.dp), color = JhdGreen, fontSize = 10.sp, maxLines = 1)
             }
-            Text(item.title, Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 6.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF203A30), maxLines = 3, overflow = TextOverflow.Ellipsis)
-            if (item.image.isNotBlank()) FeedImage(item.image, item.title, Modifier.fillMaxWidth().height(195.dp).padding(top = 5.dp))
-            if (item.summary.isNotBlank()) Text(item.summary, Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 10.dp), color = Color(0xFF46574F), style = MaterialTheme.typography.bodyMedium, lineHeight = 23.sp, maxLines = 5, overflow = TextOverflow.Ellipsis)
-            HorizontalDivider(color = Color(0xFFE6ECE8))
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onOpen) { Icon(Icons.Default.Article, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("ادامهٔ مطلب") }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = onOpen) { Text("جزئیات") }
+            Column(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ContentBadge(typeLabel(item.type), JhdPale, JhdGreen)
+                    Spacer(Modifier.weight(1f))
+                    if (item.date.isNotBlank()) Text(readableDate(item.date), color = JhdMuted, fontSize = 11.sp, maxLines = 1)
+                }
+                Text(item.title, color = Color(0xFF203A30), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (item.summary.isNotBlank()) {
+                    Text(item.summary, color = Color(0xFF4E5E55), style = MaterialTheme.typography.bodyMedium, lineHeight = 23.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
+                CardActionLine(label = if (item.type == "event") "جزئیات رویداد" else if (item.type == "announcement") "مشاهدهٔ اطلاعیه" else "ادامهٔ خبر", icon = Icons.Default.ArrowForward)
             }
         }
+    }
+}
+
+@Composable
+private fun ReadingCard(item: FeedItem, onOpen: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+                FeedImage(
+                    item.image, item.title,
+                    Modifier.width(96.dp).height(116.dp),
+                    if (item.type == "speech") Icons.Default.Mic else Icons.Default.Article
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ContentBadge(typeLabel(item.type), Color(0xFFEAF0FF), Color(0xFF244A8F))
+                        Spacer(Modifier.weight(1f))
+                        Icon(Icons.Default.BookmarkBorder, contentDescription = null, tint = Color(0xFF244A8F), modifier = Modifier.size(19.dp))
+                    }
+                    Text(item.title, color = Color(0xFF213653), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    if (item.summary.isNotBlank()) Text(item.summary, color = JhdMuted, style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            HorizontalDivider(color = Color(0xFFE9EDF5))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                if (item.author.isNotBlank()) {
+                    Icon(Icons.Default.PersonOutline, contentDescription = null, tint = JhdMuted, modifier = Modifier.size(15.dp))
+                    Text(item.author, color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (item.author.isNotBlank() && item.date.isNotBlank()) Text("•", color = JhdMuted, fontSize = 11.sp)
+                if (item.date.isNotBlank()) Text(readableDate(item.date), color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                Spacer(Modifier.weight(1f))
+                CardActionLine(label = "مطالعه", icon = Icons.Default.ArrowForward)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookCard(item: FeedItem, onOpen: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(13.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FeedImage(item.image, item.title, Modifier.width(104.dp).height(145.dp), Icons.Default.MenuBook)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ContentBadge("کتابخانه", Color(0xFFF8F0DC), Color(0xFF7A5A20))
+                Text(item.title, color = Color(0xFF3A3021), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                if (item.author.isNotBlank()) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Icon(Icons.Default.PersonOutline, contentDescription = null, tint = Color(0xFF8A754D), modifier = Modifier.size(16.dp))
+                        Text(item.author, color = JhdMuted, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                if (item.summary.isNotBlank()) Text(item.summary, color = Color(0xFF655B4B), style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                CardActionLine(label = "مشخصات کتاب", icon = Icons.Default.ArrowForward)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LessonCard(item: FeedItem, onOpen: () -> Unit) {
+    val isCourse = item.type == "course"
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(Modifier.fillMaxWidth()) {
+            Box(Modifier.width(5.dp).fillMaxHeight().defaultMinSize(minHeight = 138.dp).background(JhdGreen))
+            Column(Modifier.weight(1f).padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(JhdPale), contentAlignment = Alignment.Center) {
+                        Icon(if (isCourse) Icons.Default.LibraryBooks else Icons.Default.School, contentDescription = null, tint = JhdGreen, modifier = Modifier.size(23.dp))
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        ContentBadge(if (isCourse) "مجموعهٔ درسی" else "درس آموزشی", JhdPale, JhdGreen)
+                        if (item.collection.isNotBlank() && !isCourse) {
+                            Text(item.collection, color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    if (item.date.isNotBlank()) Text(readableDate(item.date), color = JhdMuted, fontSize = 10.sp, maxLines = 1)
+                }
+                Text(item.title, color = Color(0xFF203A30), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (item.summary.isNotBlank()) Text(item.summary, color = Color(0xFF4E5E55), style = MaterialTheme.typography.bodySmall, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (item.author.isNotBlank()) Text("مدرس: " + item.author, color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                CardActionLine(label = if (isCourse) "ورود به مجموعه" else "مشاهدهٔ درس", icon = Icons.Default.ArrowForward)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TopicCard(item: FeedItem, onOpen: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(15.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+            Box(Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFF0E9FA)), contentAlignment = Alignment.Center) {
+                if (item.image.isNotBlank()) {
+                    FeedImage(item.image, item.title, Modifier.fillMaxSize(), Icons.Default.LibraryBooks)
+                } else {
+                    Icon(Icons.Default.LibraryBooks, contentDescription = null, tint = Color(0xFF6F4C91), modifier = Modifier.size(29.dp))
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ContentBadge("موضوع علمی", Color(0xFFF0E9FA), Color(0xFF6F4C91))
+                Text(item.title, color = Color(0xFF39294A), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (item.summary.isNotBlank()) Text(item.summary, color = JhdMuted, style = MaterialTheme.typography.bodySmall, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                CardActionLine(label = "معرفی موضوع", icon = Icons.Default.ArrowForward)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MediaCard(item: FeedItem, onOpen: () -> Unit) {
+    val isVideo = item.type == "video"
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.width(112.dp).height(94.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFFE7EFFA)), contentAlignment = Alignment.Center) {
+                    if (item.image.isNotBlank()) FeedImage(item.image, item.title, Modifier.fillMaxSize(), if (isVideo) Icons.Default.Videocam else Icons.Default.Headphones)
+                    else Icon(if (isVideo) Icons.Default.Videocam else Icons.Default.Headphones, contentDescription = null, tint = Color(0xFF315C8C), modifier = Modifier.size(34.dp))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    ContentBadge(if (isVideo) "ویدیوی آموزشی" else "فایل صوتی", Color(0xFFE7EFFA), Color(0xFF315C8C))
+                    Text(item.title, color = Color(0xFF253B52), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    if (item.author.isNotBlank()) Text(item.author, color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (item.content.isNotBlank()) {
+                Text(
+                    (if (isVideo) "ویدیوی مرتبط با: " else "صوت مرتبط با: ") + item.content,
+                    color = JhdMuted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis
+                )
+            }
+            HorizontalDivider(color = Color(0xFFE8EDF3))
+            CardActionLine(label = "جزئیات و پیوند رسانه", icon = Icons.Default.OpenInNew)
+        }
+    }
+}
+
+@Composable
+private fun GeneralContentCard(item: FeedItem, onOpen: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ContentBadge(typeLabel(item.type), JhdPale, JhdGreen)
+                Spacer(Modifier.weight(1f))
+                if (item.date.isNotBlank()) Text(readableDate(item.date), color = JhdMuted, style = MaterialTheme.typography.labelSmall)
+            }
+            Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF203A30), maxLines = 3, overflow = TextOverflow.Ellipsis)
+            if (item.summary.isNotBlank()) Text(item.summary, color = JhdMuted, style = MaterialTheme.typography.bodyMedium, lineHeight = 22.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            CardActionLine(label = "جزئیات مطلب", icon = Icons.Default.ArrowForward)
+        }
+    }
+}
+
+@Composable
+private fun ContentBadge(label: String, background: Color, foreground: Color) {
+    Surface(color = background, shape = RoundedCornerShape(8.dp)) {
+        Text(label, Modifier.padding(horizontal = 8.dp, vertical = 5.dp), color = foreground, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+@Composable
+private fun CardActionLine(label: String, icon: ImageVector) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, color = JhdGreen, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        Icon(icon, contentDescription = null, tint = JhdGreen, modifier = Modifier.size(16.dp))
     }
 }
 
@@ -474,11 +777,27 @@ private fun MoreCard(title: String, body: String, action: String, onClick: () ->
 }
 
 @Composable
-private fun FeedImage(url: String, description: String, modifier: Modifier = Modifier) {
+private fun FeedImage(
+    url: String,
+    description: String,
+    modifier: Modifier = Modifier,
+    placeholder: ImageVector = Icons.Default.Article
+) {
     val bitmap by produceState<Bitmap?>(null, url) {
-        value = withContext(Dispatchers.IO) { runCatching { TinyImageCache.get(url) }.getOrNull() }
+        value = if (url.startsWith("https://", true)) {
+            withContext(Dispatchers.IO) { runCatching { TinyImageCache.get(url) }.getOrNull() }
+        } else null
     }
-    if (bitmap != null) Image(bitmap!!.asImageBitmap(), contentDescription = description, modifier = modifier.clip(RoundedCornerShape(11.dp)), contentScale = ContentScale.Crop)
+    Box(
+        modifier = modifier.clip(RoundedCornerShape(11.dp)).background(JhdPale),
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            Image(bitmap!!.asImageBitmap(), contentDescription = description, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        } else {
+            Icon(placeholder, contentDescription = description, tint = JhdGreen.copy(alpha = .8f), modifier = Modifier.size(31.dp))
+        }
+    }
 }
 
 private object TinyImageCache {
