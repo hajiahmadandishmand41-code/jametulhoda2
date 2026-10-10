@@ -27,6 +27,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -57,8 +59,7 @@ private data class FeedItem(
     val summary: String, val content: String, val author: String,
     val date: String, val url: String, val image: String
 )
-private data class FeedMeta(val facebookConfigured: Boolean, val facebookConnected: Boolean, val facebookUrl: String)
-private data class FeedData(val items: List<FeedItem>, val meta: FeedMeta, val raw: String)
+private data class FeedData(val items: List<FeedItem>, val raw: String)
 private enum class FeedTab(val label: String) { HOME("خانه"), NEWS("اخبار"), RESEARCH("پژوهش"), BOOKS("کتابخانه"), MORE("بیشتر") }
 
 private object FeedRepository {
@@ -101,12 +102,7 @@ private object FeedRepository {
                 ))
             }
         }
-        val meta = root.optJSONObject("meta") ?: JSONObject()
-        return FeedData(list, FeedMeta(
-            meta.optBoolean("facebook_configured", false),
-            meta.optBoolean("facebook_connected", false),
-            meta.optString("facebook_page_url").trim()
-        ), raw)
+        return FeedData(list, raw)
     }
 }
 
@@ -116,7 +112,6 @@ fun NativeFeedScreen() {
     val scope = rememberCoroutineScope()
     val cache = remember { FeedRepository.cached(context) }
     var feed by remember { mutableStateOf(cache?.items ?: emptyList()) }
-    var meta by remember { mutableStateOf(cache?.meta ?: FeedMeta(false, false, "")) }
     var tab by remember { mutableStateOf(FeedTab.HOME) }
     var selected by remember { mutableStateOf<FeedItem?>(null) }
     var search by remember { mutableStateOf("") }
@@ -132,7 +127,6 @@ fun NativeFeedScreen() {
             val result = runCatching { withContext(Dispatchers.IO) { FeedRepository.fetch() } }
             result.onSuccess {
                 feed = it.items
-                meta = it.meta
                 FeedRepository.save(context, it.raw)
                 if (it.items.isEmpty()) error = "در حال حاضر محتوای منتشرشده‌ای برای نمایش پیدا نشد."
             }.onFailure {
@@ -149,7 +143,7 @@ fun NativeFeedScreen() {
         feed.filter { item ->
             val tabMatch = when (tab) {
                 FeedTab.HOME -> true
-                FeedTab.NEWS -> item.type in setOf("news", "announcement", "event", "facebook")
+                FeedTab.NEWS -> item.type in setOf("news", "announcement", "event")
                 FeedTab.RESEARCH -> item.type in setOf("article", "research", "report", "speech", "qa", "program")
                 FeedTab.BOOKS -> item.type == "book"
                 FeedTab.MORE -> false
@@ -194,22 +188,14 @@ fun NativeFeedScreen() {
                     }
                 )
                 tab == FeedTab.MORE -> MorePage(
-                    modifier = Modifier.padding(padding), meta = meta,
+                    modifier = Modifier.padding(padding),
                     onSite = { openExternal(context, "https://jametulhoda.vercel.app/") },
-                    onFacebook = {
-                        if (meta.facebookUrl.isNotBlank()) openExternal(context, meta.facebookUrl)
-                        else Toast.makeText(context, "نشانی صفحهٔ فیسبوک هنوز تنظیم نشده است.", Toast.LENGTH_SHORT).show()
-                    },
                     onRefresh = { refresh() }
                 )
                 else -> MainFeed(
                     modifier = Modifier.padding(padding), items = visible, tab = tab,
-                    hasCached = feed.isNotEmpty(), loading = loading, error = error, meta = meta,
+                    hasCached = feed.isNotEmpty(), loading = loading, error = error,
                     query = search, onRetry = { refresh() }, onOpen = { selected = it },
-                    onFacebook = {
-                        if (meta.facebookUrl.isNotBlank()) openExternal(context, meta.facebookUrl)
-                        else Toast.makeText(context, "نشانی صفحهٔ فیسبوک هنوز تنظیم نشده است.", Toast.LENGTH_SHORT).show()
-                    }
                 )
             }
         }
@@ -229,12 +215,15 @@ private fun NativeHeader(
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (detail) IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "بازگشت") }
-                else Box(Modifier.size(43.dp).clip(CircleShape).background(JhdGreen), contentAlignment = Alignment.Center) {
-                    Text("ج", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
-                }
+                else Image(
+                    painter = painterResource(R.drawable.ic_jametulhoda_logo),
+                    contentDescription = "لوگوی جامعه‌الهدی",
+                    modifier = Modifier.size(43.dp),
+                    contentScale = ContentScale.Fit
+                )
                 Column(Modifier.weight(1f)) {
-                    Text(if (detail) "جزئیات مطلب" else "مدرسه جامعه‌الهدی", color = JhdGreen, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    if (!detail) Text("آموزش • پژوهش • اطلاع‌رسانی", color = JhdMuted, style = MaterialTheme.typography.labelSmall)
+                    Text(if (detail) "جزئیات مطلب" else "جامعه‌الهدی", color = JhdGreen, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    if (!detail) Text("مرکز علمی، آموزشی و پژوهشی", color = JhdMuted, style = MaterialTheme.typography.labelSmall)
                 }
                 if (detail) {
                     IconButton(onClick = onShare) { Icon(Icons.Default.Share, contentDescription = "اشتراک‌گذاری", tint = JhdGreen) }
@@ -285,15 +274,14 @@ private fun NativeNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
 @Composable
 private fun MainFeed(
     modifier: Modifier, items: List<FeedItem>, tab: FeedTab, hasCached: Boolean,
-    loading: Boolean, error: String?, meta: FeedMeta, query: String,
-    onRetry: () -> Unit, onOpen: (FeedItem) -> Unit, onFacebook: () -> Unit
+    loading: Boolean, error: String?, query: String,
+    onRetry: () -> Unit, onOpen: (FeedItem) -> Unit
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(13.dp, 14.dp, 13.dp, 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { IntroCard(tab = tab, count = items.size) }
-        if (tab == FeedTab.HOME && !meta.facebookConfigured) item { FacebookNote(onFacebook) }
         if (!error.isNullOrBlank()) item { StatusCard(error, !hasCached, onRetry) }
         if (items.isEmpty()) item { EmptyCard(loading, query.isNotBlank(), tab, onRetry) }
         else items(items, key = { it.id }) { row -> PostCard(row) { onOpen(row) } }
@@ -344,26 +332,18 @@ private fun IntroCard(tab: FeedTab, count: Int) {
 }
 
 @Composable
-private fun FacebookNote(onFacebook: () -> Unit) {
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF3FF))) {
-        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text("اتصال صفحهٔ فیسبوک", color = Color(0xFF184F91), fontWeight = FontWeight.Bold)
-            Text("پست‌های فیسبوک پس از تنظیم مجازِ صفحه در سرور فعال می‌شوند؛ رمز یا توکن در برنامه قرار نمی‌گیرد.", color = Color(0xFF33516E), style = MaterialTheme.typography.bodySmall, lineHeight = 20.sp)
-            TextButton(onClick = onFacebook) { Text("باز کردن فیسبوک") }
-        }
-    }
-}
-
-@Composable
 private fun PostCard(item: FeedItem, onOpen: () -> Unit) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(19.dp), colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(1.dp)) {
         Column {
             Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.size(39.dp).clip(CircleShape).background(if (item.source == "facebook") Color(0xFF1877F2) else JhdPale), contentAlignment = Alignment.Center) {
-                    Text(if (item.source == "facebook") "f" else "ج", color = if (item.source == "facebook") Color.White else JhdGreen, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                }
+                Image(
+                    painter = painterResource(R.drawable.ic_jametulhoda_logo),
+                    contentDescription = "لوگوی جامعه‌الهدی",
+                    modifier = Modifier.size(39.dp).clip(CircleShape).padding(3.dp),
+                    contentScale = ContentScale.Fit
+                )
                 Column(Modifier.weight(1f)) {
-                    Text(if (item.source == "facebook") "پست فیسبوک" else "مدرسه جامعه‌الهدی", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                    Text("جامعه‌الهدی", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
                     val byline = listOf(item.author, readableDate(item.date)).filter { it.isNotBlank() }.joinToString(" • ")
                     Text(byline.ifBlank { typeLabel(item.type) }, color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -397,7 +377,7 @@ private fun DetailPage(item: FeedItem, modifier: Modifier, onOpen: () -> Unit, o
                     Text(item.content.ifBlank { item.summary.ifBlank { "متن کامل در منبع اصلی منتشر شده است." } }, style = MaterialTheme.typography.bodyLarge, color = Color(0xFF30483D), lineHeight = 28.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = onOpen, enabled = item.url.startsWith("https://"), colors = ButtonDefaults.buttonColors(containerColor = JhdGreen)) {
-                            Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text(if (item.source == "facebook") "مشاهده در فیسبوک" else "منبع اصلی")
+                            Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("مشاهدهٔ منبع اصلی")
                         }
                         TextButton(onClick = onShare) { Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("اشتراک") }
                     }
@@ -434,19 +414,16 @@ private fun StatusCard(message: String, showRetry: Boolean, onRetry: () -> Unit)
 }
 
 @Composable
-private fun MorePage(modifier: Modifier, meta: FeedMeta, onSite: () -> Unit, onFacebook: () -> Unit, onRefresh: () -> Unit) {
+private fun MorePage(modifier: Modifier, onSite: () -> Unit, onRefresh: () -> Unit) {
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(15.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { IntroCard(FeedTab.MORE, 0) }
-        item { MoreCard("وب‌سایت جامعه‌الهدی", "صفحه‌های کامل، درس‌ها و اطلاعات تکمیلی.", "باز کردن وب‌سایت", onSite) }
-        item { MoreCard("صفحهٔ فیسبوک", if (meta.facebookConnected) "دریافت پست‌های صفحه از راه اتصال رسمی فعال است." else "خواندن خودکار پست‌ها به اتصال مجاز Meta در سرور نیاز دارد.", "باز کردن فیسبوک", onFacebook) }
-        item { MoreCard("حالت آفلاین", "آخرین خوراک موفق در تلفن نگهداری می‌شود تا متن‌های قبلی هنگام قطع اینترنت در دسترس بماند.", "تازه‌سازی محتوا", onRefresh) }
+        item { MoreCard("وب‌سایت رسمی جامعه‌الهدی", "برای دسترسی به همهٔ صفحه‌ها و اطلاعات تکمیلی، وب‌سایت رسمی را باز کنید.", "باز کردن وب‌سایت", onSite) }
+        item { MoreCard("تازه‌سازی محتوا", "آخرین فید موفق در تلفن نگهداری می‌شود تا متن‌های قبلی هنگام قطع اینترنت در دسترس بماند.", "تلاش برای به‌روزرسانی", onRefresh) }
         item {
-            Text("این اپلیکیشن رابط بومی اندروید است، نه یک وب‌سایت داخل WebView. اطلاعات فیسبوک فقط از راه اتصال رسمی و امن سمت سرور خوانده می‌شود.", Modifier.padding(4.dp), color = JhdMuted, style = MaterialTheme.typography.bodySmall, lineHeight = 22.sp)
+            Text("این برنامه محتوای عمومی منتشرشدهٔ جامعه‌الهدی را از API وب‌سایت دریافت می‌کند.", Modifier.padding(4.dp), color = JhdMuted, style = MaterialTheme.typography.bodySmall, lineHeight = 22.sp)
         }
     }
-}
-
-@Composable
+}@Composable
 private fun MoreCard(title: String, body: String, action: String, onClick: () -> Unit) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(17.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
         Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -509,7 +486,7 @@ private object TinyImageCache {
 
 private fun readableDate(value: String): String = value.takeIf { it.isNotBlank() }?.replace('T', ' ')?.take(10).orEmpty()
 private fun typeLabel(type: String): String = when (type.lowercase(Locale.ROOT)) {
-    "facebook" -> "فیسبوک"; "news" -> "خبر"; "announcement" -> "اطلاعیه"; "event" -> "رویداد"
+    "news" -> "خبر"; "announcement" -> "اطلاعیه"; "event" -> "رویداد"
     "article" -> "مقاله"; "research" -> "پژوهش"; "report" -> "گزارش"; "speech" -> "سخنرانی"
     "program" -> "برنامه"; "qa" -> "پرسش‌وپاسخ"; "book" -> "کتاب"; else -> "مطلب"
 }
