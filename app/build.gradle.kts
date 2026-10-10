@@ -49,7 +49,7 @@ android {
       // Internal test APK; not suitable for Play Store publication.
       signingConfig = signingConfigs.getByName("debugConfig")
     }
-    lite {
+    create("lite") {
       // Minified benchmark build for testing the sub-10 MB goal.
       // Separate package/debug signing: never publish this variant to Google Play.
       initWith(getByName("release"))
