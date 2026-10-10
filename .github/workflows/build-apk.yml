@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    name: Test and build debug APK
+    name: Test and build lightweight APKs
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -65,7 +65,7 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Run unit tests and assemble APK
-        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug :app:assembleLite
 
       - name: Verify generated APK
         shell: bash
@@ -73,14 +73,28 @@ jobs:
           set -euo pipefail
           apk="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$apk"
+          echo "Debug APK size: $(stat -c%s "$apk") bytes"
           sha256sum "$apk"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | sed -n '1,5p'
+          lite="app/build/outputs/apk/lite/app-lite.apk"
+          test -s "$lite"
+          echo "Minified lite benchmark size: $(stat -c%s "$lite") bytes"
+          sha256sum "$lite"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$lite" | sed -n '1,5p'
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
         with:
           name: jametulhoda-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload minified lite benchmark APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: jametulhoda-lite-benchmark-apk
+          path: app/build/outputs/apk/lite/app-lite.apk
           if-no-files-found: error
           retention-days: 7
 
