@@ -1,23 +1,101 @@
 <resources>
     <string name="app_name">جامعه‌الهدی</string>
     <string name="app_subtitle">مرکز علمی، آموزشی و پژوهشی</string>
-    <string name="no_internet_title">عدم برقراری ارتباط با اینترنت</string>
-    <string name="no_internet_desc">لطفاً اتصال اینترنت، وای‌فای یا داده تلفن همراه خود را بررسی کرده و مجدداً تلاش نمایید.</string>
-    <string name="web_error_title">بارگذاری صفحه ناموفق بود</string>
-    <string name="web_error_desc">ارتباط با وب‌سایت برقرار نشد یا سرور پاسخ مناسبی نداد. اتصال را بررسی کنید و دوباره تلاش نمایید.</string>
+    <string name="site_url">https://jametulhoda.vercel.app</string>
+
+    <string name="tab_home">خانه</string>
+    <string name="tab_news">اخبار</string>
+    <string name="tab_library">کتابخانه</string>
+    <string name="tab_media">رسانه</string>
+    <string name="tab_more">بیشتر</string>
+
+    <string name="section_announcements">اطلاعیه‌ها</string>
+    <string name="section_events">رویدادها</string>
+    <string name="section_articles">مقالات</string>
+    <string name="section_research">پژوهش‌ها</string>
+    <string name="section_speeches">سخنرانی‌ها</string>
+    <string name="section_lessons">درس‌ها</string>
+    <string name="section_topics">موضوعات</string>
+    <string name="section_books">کتاب‌ها</string>
+    <string name="section_qa">پرسش و پاسخ</string>
+
+    <string name="type_news">خبر</string>
+    <string name="type_article">مقاله</string>
+    <string name="type_research">پژوهش</string>
+    <string name="type_report">گزارش</string>
+    <string name="type_announcement">اطلاعیه</string>
+    <string name="type_event">رویداد</string>
+    <string name="type_program">برنامه</string>
+    <string name="type_religious">فعالیت مذهبی</string>
+    <string name="type_qa">پرسش و پاسخ</string>
+    <string name="type_speech">سخنرانی</string>
+    <string name="type_book">کتاب</string>
+    <string name="type_lesson">درس</string>
+    <string name="type_audio">صوت</string>
+    <string name="type_video">ویدیو</string>
+    <string name="type_topic">موضوع</string>
+
+    <string name="search">جست‌وجو</string>
+    <string name="search_hint">جست‌وجو در مطالب، کتاب‌ها، درس‌ها…</string>
+    <string name="search_empty">عبارتی برای جست‌وجو بنویسید.</string>
+    <string name="search_no_result">نتیجه‌ای پیدا نشد.</string>
+
+    <string name="loading">در حال بارگذاری…</string>
     <string name="retry">تلاش مجدد</string>
-    <string name="home">صفحه اصلی</string>
     <string name="refresh">تازه‌سازی</string>
     <string name="back">بازگشت</string>
-    <string name="forward">جلو</string>
     <string name="share">اشتراک‌گذاری</string>
-    <string name="exit_confirm">برای خروج از برنامه، یک بار دیگر دکمه بازگشت را لمس کنید.</string>
-    <string name="loading">در حال بارگذاری…</string>
+    <string name="download">دانلود فایل</string>
     <string name="download_started">دانلود فایل آغاز شد…</string>
-    <string name="external_link_open">باز کردن در مرورگر خارجی</string>
+    <string name="download_done">فایل ذخیره شد</string>
+    <string name="open_file">باز کردن فایل</string>
+    <string name="read_pdf">مشاهدهٔ PDF</string>
+    <string name="play">پخش</string>
+    <string name="pause">توقف</string>
+
+    <string name="no_internet_title">عدم برقراری ارتباط با اینترنت</string>
+    <string name="no_internet_desc">اتصال اینترنت، وای‌فای یا داده تلفن همراه را بررسی کنید و دوباره تلاش نمایید.</string>
+    <string name="error_title">خطا در دریافت اطلاعات</string>
+    <string name="error_desc">ارتباط با سرور برقرار نشد یا پاسخ مناسبی دریافت نشد.</string>
+    <string name="empty_list">هنوز محتوایی منتشر نشده است.</string>
+
+    <string name="login">ورود</string>
+    <string name="register">ثبت‌نام</string>
+    <string name="logout">خروج</string>
+    <string name="profile">حساب کاربری</string>
     <string name="settings">تنظیمات</string>
+    <string name="about">درباره ما</string>
+    <string name="contact">تماس با ما</string>
+
+    <string name="login_title">ورود به حساب</string>
+    <string name="register_title">ساخت حساب جدید</string>
+    <string name="identifier_hint">ایمیل، نام کاربری یا شماره تلفن</string>
+    <string name="password">رمز عبور</string>
+    <string name="password_confirm">تکرار رمز عبور</string>
+    <string name="full_name">نام کامل</string>
+    <string name="email">ایمیل (اختیاری)</string>
+    <string name="phone">شماره تلفن</string>
+    <string name="country">کشور</string>
+    <string name="agreed_terms">با قوانین سایت موافقم</string>
+    <string name="change_password">تغییر رمز عبور</string>
+    <string name="current_password">رمز فعلی</string>
+    <string name="new_password">رمز جدید</string>
+    <string name="no_account">حساب ندارید؟ ثبت‌نام</string>
+    <string name="have_account">قبلاً ثبت‌نام کرده‌اید؟ ورود</string>
+    <string name="logged_in_as">وارد شده‌اید</string>
+
+    <string name="like">پسندیدن</string>
+    <string name="liked">پسندیده‌شده</string>
+    <string name="like_login_needed">برای پسندیدن ابتدا وارد حساب شوید.</string>
+
+    <string name="dark_mode">حالت تاریک</string>
     <string name="clear_cache">پاکسازی حافظه موقت</string>
     <string name="cache_cleared">حافظه موقت پاک شد</string>
     <string name="about_app">درباره برنامه</string>
-    <string name="site_url">https://jametulhoda.vercel.app/</string>
+    <string name="exit_confirm">برای خروج از برنامه، یک بار دیگر دکمه بازگشت را لمس کنید.</string>
+
+    <string name="contact_subject">موضوع</string>
+    <string name="contact_message">متن پیام</string>
+    <string name="contact_send">ارسال پیام</string>
+    <string name="contact_sent">پیام شما ارسال شد.</string>
 </resources>

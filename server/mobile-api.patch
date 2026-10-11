@@ -1,0 +1,2380 @@
+From 93aa9da2516d1be9b9d76983ef070a41ec2dba6a Mon Sep 17 00:00:00 2001
+From: Arena Agent <agent@arena.ai>
+Date: Sun, 11 Oct 2026 13:28:08 +0000
+Subject: [PATCH] Add complete mobile API (/api/mobile/*): auth tokens, likes,
+ content, search
+
+- api/mobile/: JSON endpoints for home, listings+pagination, details, books,
+  lessons/collections, topics, media, search, categories, about/contact
+- Bearer auth: register/login/me/profile/change-password/logout; tokens stored
+  as sha256 hashes only, revocable, invalidated on password change (auth_version)
+- content_likes with per-(user,ref) uniqueness: idempotent like/unlike, counts
+  from COUNT(*) only (forged counters ignored), published content only
+- Additive idempotent schema for api_tokens + content_likes (pg/mysql/sqlite)
+- tests/mobile-api.mjs: 67 contract checks (auth, likes, search, downloads,
+  media, validation, method errors, draft privacy)
+- docs/MOBILE-API.md contract + Mobile API tests workflow + README section
+- /api/mobile-feed kept intact for backwards compatibility
+---
+ .github/workflows/mobile-api.yml |  84 ++++
+ README.md                        |  17 +
+ api/mobile/auth.php              | 211 +++++++++
+ api/mobile/common.php            | 776 +++++++++++++++++++++++++++++++
+ api/mobile/index.php             | 587 +++++++++++++++++++++++
+ api/mobile/likes.php             |  99 ++++
+ config/routes.php                |  28 ++
+ database/database.mysql.sql      |  28 ++
+ database/database.postgres.sql   |  28 ++
+ docs/MOBILE-API.md               |  82 ++++
+ docs/NATIVE-ANDROID-FEED.md      |   4 +
+ tests/fixtures/schema.sqlite.sql |  22 +
+ tests/mobile-api.mjs             | 264 +++++++++++
+ 13 files changed, 2230 insertions(+)
+ create mode 100644 .github/workflows/mobile-api.yml
+ create mode 100644 api/mobile/auth.php
+ create mode 100644 api/mobile/common.php
+ create mode 100644 api/mobile/index.php
+ create mode 100644 api/mobile/likes.php
+ create mode 100644 docs/MOBILE-API.md
+ create mode 100644 tests/mobile-api.mjs
+
+diff --git a/.github/workflows/mobile-api.yml b/.github/workflows/mobile-api.yml
+new file mode 100644
+index 0000000..017ef01
+--- /dev/null
++++ b/.github/workflows/mobile-api.yml
+@@ -0,0 +1,84 @@
++name: Mobile API tests
++
++on:
++  push:
++    branches: ['**']
++  pull_request:
++  workflow_dispatch:
++
++permissions:
++  contents: read
++
++concurrency:
++  group: mobile-api-${{ github.ref }}
++  cancel-in-progress: true
++
++jobs:
++  mobile-api:
++    name: Lint and mobile API contract tests
++    runs-on: ubuntu-latest
++    timeout-minutes: 15
++    steps:
++      - uses: actions/checkout@v4
++
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 22
++
++      - uses: shivammathur/setup-php@v2
++        with:
++          php-version: '8.3'
++          extensions: curl, mbstring, dom, fileinfo, pdo_sqlite, sqlite3, zip, gd
++          coverage: none
++
++      - name: Install dependencies
++        run: npm install --no-audit --no-fund
++
++      - name: PHP syntax check (all files)
++        run: node tools/lint-php.mjs
++
++      - name: Build the throwaway SQLite database
++        env:
++          APP_ENV: development
++          DB_DRIVER: sqlite
++          SQLITE_PATH: /tmp/jametulhoda-mobile.sqlite
++          SESSION_DRIVER: files
++          UPLOAD_STORAGE: local
++        run: |
++          rm -f /tmp/jametulhoda-mobile.sqlite
++          php bin/dev-db.php
++          # Seed media URLs must resolve so download/pipeline checks are real.
++          mkdir -p uploads/images uploads/audios uploads/videos uploads/documents
++          cp tests/fixtures/image.png uploads/images/seed-cover.png
++          cp tests/fixtures/audio.mp3 uploads/audios/seed-audio.mp3
++          cp tests/fixtures/video.mp4 uploads/videos/seed-video.mp4
++          cp tests/fixtures/image.png uploads/documents/seed-doc.pdf
++
++      - name: Serve the site
++        env:
++          APP_ENV: development
++          DB_DRIVER: sqlite
++          SQLITE_PATH: /tmp/jametulhoda-mobile.sqlite
++          SESSION_DRIVER: files
++          UPLOAD_STORAGE: local
++          SITE_URL: http://127.0.0.1:8080
++        run: |
++          php -S 127.0.0.1:8080 router.php > /tmp/php-server.log 2>&1 &
++          for i in $(seq 1 30); do
++            if curl -sf -o /dev/null http://127.0.0.1:8080/api/mobile/health; then echo "server up"; break; fi
++            sleep 1
++          done
++
++      - name: Run mobile API contract tests
++        env:
++          TEST_BASE_URL: http://127.0.0.1:8080
++        run: node tests/mobile-api.mjs
++
++      - name: Upload server log on failure
++        if: failure()
++        uses: actions/upload-artifact@v4
++        with:
++          name: mobile-api-log
++          path: /tmp/php-server.log
++          if-no-files-found: ignore
++          retention-days: 7
+diff --git a/README.md b/README.md
+index e57fccc..a95a6bf 100644
+--- a/README.md
++++ b/README.md
+@@ -113,6 +113,21 @@ unset ADMIN_PASSWORD
+ 
+ فهرست بدون secret در [`.env.example`](.env.example) است. شرایط متغیرها، TLS پایگاه داده، دسترسی bucket، آزمون پس از استقرار و محدودیت محیط زنده در [فهرست آماده‌سازی تولید](PRODUCTION_CHECKLIST_FA.md) آمده است. `.env` را commit نکنید؛ secrets را فقط در dashboard میزبان یا secret manager نگهداری کنید.
+ 
++## API موبایل (اندروید)
++
++اپلیکیشن بومی اندروید از خانوادهٔ مسیرهای `/api/mobile/*` استفاده می‌کند (JSON؛
++فهرست کامل در [docs/MOBILE-API.md](docs/MOBILE-API.md)):
++
++- محتوای عمومی: خانه، فهرست‌ها با صفحه‌بندی، جزئیات، کتاب، درس، موضوع، رسانه، جست‌وجو، دسته‌ها، درباره/تماس.
++- احراز هویت عضو با توکن Bearer (ثبت‌نام، ورود، پروفایل، تغییر رمز، خروج امن)؛
++  توکن‌ها فقط به‌صورت hash ذخیره می‌شوند و تغییر رمز همهٔ نشست‌های وب و اپ را باطل می‌کند.
++- لایک امن با قید یکتایی سمت دیتابیس (بدون شمارندهٔ قابل جعل یا ثبت تکراری).
++
++جدول‌های `api_tokens` و `content_likes` با `php bin/migrate.php` (idempotent) ساخته
++می‌شوند؛ هیچ داده یا فایل موجودی حذف/بازنشانی نمی‌شود. فید قبلی
++`/api/mobile-feed` برای سازگاری پابرجاست. آزمون قرارداد: `node tests/mobile-api.mjs`
++(گردش‌کار **Mobile API tests** همین را در CI اجرا می‌کند).
++
+ ## آزمون‌ها
+ 
+ آزمون‌های HTTP در دیتابیس **آزمایشی و قابل حذف** محتوا ایجاد می‌کنند؛ روی سایت واقعی اجرا نکنید.
+@@ -163,6 +178,8 @@ storage/    logs/  cache/
+ - [فهرست آماده‌سازی برای محیط تولید](PRODUCTION_CHECKLIST_FA.md)
+ - [سامانهٔ طراحی یکپارچه: کارت‌ها، هاب‌ها، ناوبری و پنل موبایل‌محور](DESIGN_SYSTEM_FA.md)
+ - [نمونه متغیرهای محیطی بدون اسرار](.env.example)
++- [API بومی موبایل (اندروید) — قرارداد `/api/mobile/*`](docs/MOBILE-API.md)
++- [فید سبک اندروید (`/api/mobile-feed`)](docs/NATIVE-ANDROID-FEED.md)
+ - [آزمون سرتاسری محیط زنده](.github/workflows/production-e2e.yml)
+ - [آزمون رانندهٔ فضای ذخیره‌سازی](tests/storage-drivers.php)
+ 
+diff --git a/api/mobile/auth.php b/api/mobile/auth.php
+new file mode 100644
+index 0000000..4c3eece
+--- /dev/null
++++ b/api/mobile/auth.php
+@@ -0,0 +1,211 @@
++<?php
++/**
++ * api/mobile/auth.php — احراز هویت موبایل با توکن Bearer
++ *
++ * جریان‌ها: ثبت‌نام، ورود، پروفایل، تغییر رمز، خروج امن.
++ *
++ * امنیت:
++ *   • رمز فقط با password_hash()/password_verify() — همان مسیر identity.php.
++ *   • نقش هرگز از ورودی خوانده نمی‌شود؛ حساب ساخته‌شده همیشه role = user است.
++ *   • توکن دسترسی تصادفی ۲۵۶ بیتی؛ فقط hash آن ذخیره می‌شود.
++ *   • محدودیت تلاش ناموفق (login_limits) روی حساب و IP — همان قاعدهٔ وب.
++ *   • تغییر رمز ⇒ auth_version بالا می‌رود و همهٔ توکن‌ها باطل می‌شوند.
++ *   • پاسخ‌ها هرگز hash رمز، توکن دیگران یا اطلاعات مدیریتی ندارند.
++ */
++declare(strict_types=1);
++
++require_once __DIR__ . '/common.php';
++
++$action = (string)($_GET['action'] ?? '');
++
++switch ($action) {
++    // ─── ثبت‌نام ─────────────────────────────────────────────────────
++    case 'register':
++        jhd_api_method(['POST']);
++        $body = jhd_api_body();
++        $name = jhd_api_str($body, 'full_name', 120);
++        $country = jhd_api_str($body, 'country', 40);
++        $phone = jhd_api_str($body, 'phone', 32);
++        $email = mb_strtolower(jhd_api_str($body, 'email', 180));
++        $password = (string)($body['password'] ?? '');
++        $confirm = (string)($body['password_confirm'] ?? $password);
++        $device = jhd_api_str($body, 'device_label', 120);
++        $agreed = $body['agreed_terms'] ?? false;
++        if (!is_string($password)) jhd_api_error('invalid_password', 'رمز عبور معتبر نیست.', 422);
++        if (!is_string($confirm)) $confirm = $password;
++
++        $countries = jhd_countries();
++        if ($country === '' || !isset($countries[$country])) {
++            jhd_api_error('invalid_country', 'کشور انتخاب‌شده معتبر نیست.', 422);
++        }
++        $dial = (string)$countries[$country]['dial'];
++        if (mb_strlen($name, 'UTF-8') < 2 || mb_strlen($name, 'UTF-8') > 120) {
++            jhd_api_error('invalid_name', 'نام را به‌درستی وارد کنید.', 422);
++        }
++        if ($agreed !== true && $agreed !== 1 && $agreed !== '1') {
++            jhd_api_error('terms_required', 'برای ثبت‌نام باید با قوانین سایت موافق باشید.', 422);
++        }
++        if (strlen($password) < 8 || strlen($password) > 4096) {
++            jhd_api_error('invalid_password', 'رمز عبور باید حداقل ۸ نویسه باشد.', 422);
++        }
++        if (!hash_equals($password, $confirm)) {
++            jhd_api_error('password_mismatch', 'تکرار رمز عبور مطابقت ندارد.', 422);
++        }
++        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
++            jhd_api_error('invalid_email', 'ایمیل واردشده معتبر نیست.', 422);
++        }
++        $normalized = normalizePhone($dial, $phone);
++        if ($normalized === '' || strlen($normalized) < 8) {
++            jhd_api_error('invalid_phone', 'شماره تلفن معتبر نیست.', 422);
++        }
++
++        $db = tryGetDB();
++        if ($db === null) jhd_api_error('unavailable', 'ثبت‌نام در این لحظه ممکن نیست. بعداً دوباره تلاش کنید.', 503);
++        try {
++            if (recordLoginAttempt($db, hash('sha256', 'member-reg:' . clientIp())) > 20) {
++                jhd_api_error('rate_limited', 'تعداد تلاش‌ها بیش از حد است. بعداً دوباره تلاش کنید.', 429);
++            }
++        } catch (Throwable $e) {
++            error_log('Registration limiter unavailable: ' . get_class($e));
++        }
++
++        // نقش ثابت user است — از هیچ ورودی خوانده نمی‌شود.
++        $created = jhd_create_user([
++            'full_name' => $name,
++            'email' => $email,
++            'phone' => $phone,
++            'phone_normalized' => $normalized,
++            'country' => (string)$countries[$country]['name'],
++            'country_code' => $dial,
++            'password' => $password,
++            'role' => JHD_ROLE_USER,
++            'is_active' => 1,
++            'agreed_terms' => 1,
++        ]);
++        if (empty($created['ok'])) {
++            // پیام یکسان برای جلوگیری از افشای وجود/عدم وجود حساب.
++            $error = (string)($created['error'] ?? '');
++            if (in_array($error, ['ایمیل واردشده معتبر نیست.', 'رمز عبور باید حداقل ۸ نویسه باشد.'], true)) {
++                jhd_api_error('invalid_request', $error, 422);
++            }
++            if (str_contains($error, 'این ایمیل قبلاً') || str_contains($error, 'این شمارهٔ تلفن قبلاً')) {
++                jhd_api_error('duplicate_account', 'امکان ایجاد حساب با این اطلاعات وجود ندارد.', 422);
++            }
++            jhd_api_error('unavailable', 'امکان ایجاد حساب با این اطلاعات وجود ندارد.', 503);
++        }
++        $user = jhd_user_by_id((int)$created['id']);
++        if ($user === null) jhd_api_error('unavailable', 'حساب ساخته شد اما بازیابی نشد. دوباره وارد شوید.', 503);
++        $issued = jhd_api_issue_token((int)$user['id'], $device);
++        jhd_api_data([
++            'token' => $issued['token'],
++            'token_type' => 'Bearer',
++            'expires_at' => $issued['expires_at'],
++            'user' => jhd_api_account($user),
++        ], [], 201);
++
++    // ─── ورود ───────────────────────────────────────────────────────
++    case 'login':
++        jhd_api_method(['POST']);
++        $body = jhd_api_body();
++        $identifier = jhd_api_str($body, 'identifier', 190);
++        $password = (string)($body['password'] ?? '');
++        $device = jhd_api_str($body, 'device_label', 120);
++        if (!is_string($password)) jhd_api_error('invalid_credentials', 'شناسه یا رمز عبور نادرست است.', 401);
++        if ($identifier === '' || $password === '') {
++            jhd_api_error('missing_credentials', 'شناسه و رمز عبور را وارد کنید.', 422);
++        }
++
++        $db = tryGetDB();
++        if ($db === null) jhd_api_error('unavailable', 'ورود در این لحظه ممکن نیست. بعداً دوباره تلاش کنید.', 503);
++        try {
++            if (recordLoginAttempt($db, hash('sha256', 'ip:' . clientIp())) > 50) {
++                jhd_api_error('rate_limited', 'تلاش‌های ناموفق از این دستگاه بیش از حد مجاز است.', 429);
++            }
++            if (recordLoginAttempt($db, hash('sha256', 'user:' . mb_strtolower($identifier))) > 8) {
++                jhd_api_error('rate_limited', 'تلاش‌های ناموفق زیاد است. ۱۵ دقیقه بعد دوباره تلاش کنید.', 429);
++            }
++        } catch (Throwable $e) {
++            error_log('Login limiter unavailable: ' . get_class($e));
++        }
++
++        $result = jhd_verify_credentials($identifier, $password);
++        if (empty($result['ok'])) {
++            $code = (string)($result['code'] ?? 'invalid');
++            $status = $code === 'inactive' ? 403 : 401;
++            jhd_api_error($code === 'inactive' ? 'inactive' : 'invalid_credentials', (string)($result['error'] ?? 'شناسه یا رمز عبور نادرست است.'), $status);
++        }
++        $user = $result['user'];
++        resetLoginAttempts($db, hash('sha256', 'user:' . mb_strtolower($identifier)));
++        try {
++            $nowSql = databaseDriver() === 'sqlite' ? "datetime('now')" : 'NOW()';
++            $db->prepare("UPDATE users SET last_login = $nowSql WHERE id = ?")->execute([(int)$user['id']]);
++        } catch (Throwable $e) {
++            error_log('last_login update failed: ' . get_class($e));
++        }
++        $issued = jhd_api_issue_token((int)$user['id'], $device);
++        jhd_api_data([
++            'token' => $issued['token'],
++            'token_type' => 'Bearer',
++            'expires_at' => $issued['expires_at'],
++            'user' => jhd_api_account($user),
++        ]);
++
++    // ─── کاربر جاری ─────────────────────────────────────────────────
++    case 'me':
++        jhd_api_method(['GET', 'HEAD']);
++        $user = jhd_api_user(true);
++        jhd_api_data(['user' => jhd_api_account($user)]);
++
++    // ─── به‌روزرسانی پروفایل ────────────────────────────────────────
++    case 'profile':
++        jhd_api_method(['POST']);
++        $user = jhd_api_user(true);
++        $body = jhd_api_body();
++        $data = [];
++        if (array_key_exists('full_name', $body)) $data['full_name'] = jhd_api_str($body, 'full_name', 120);
++        if (array_key_exists('email', $body)) $data['email'] = mb_strtolower(jhd_api_str($body, 'email', 180));
++        if (array_key_exists('phone', $body)) {
++            $phone = jhd_api_str($body, 'phone', 32);
++            $data['phone'] = $phone;
++            $dial = (string)($user['country_code'] ?? '93');
++            $data['phone_normalized'] = $phone !== '' ? normalizePhone($dial, $phone) : '';
++        }
++        if (array_key_exists('avatar', $body)) $data['avatar'] = jhd_api_str($body, 'avatar', 350);
++        if ($data === []) jhd_api_error('invalid_request', 'هیچ فیلدی برای به‌روزرسانی ارسال نشده است.', 422);
++        $result = jhd_update_profile((int)$user['id'], $data);
++        if (empty($result['ok'])) {
++            jhd_api_error('update_failed', (string)($result['error'] ?? 'ذخیرهٔ اطلاعات انجام نشد.'), 422);
++        }
++        jhd_api_data(['user' => jhd_api_account(jhd_user_by_id((int)$user['id']) ?? $user)]);
++
++    // ─── تغییر رمز ──────────────────────────────────────────────────
++    case 'change-password':
++        jhd_api_method(['POST']);
++        $user = jhd_api_user(true);
++        $body = jhd_api_body();
++        $current = (string)($body['current_password'] ?? '');
++        $next = (string)($body['new_password'] ?? '');
++        $confirm = (string)($body['new_password_confirm'] ?? $next);
++        if (!is_string($current) || !is_string($next) || !is_string($confirm)) {
++            jhd_api_error('invalid_password', 'رمز عبور معتبر نیست.', 422);
++        }
++        $result = jhd_change_password((int)$user['id'], $current, $next, $confirm, true);
++        if (empty($result['ok'])) {
++            $message = (string)($result['error'] ?? 'تغییر رمز انجام نشد.');
++            $status = str_contains($message, 'نادرست') ? 401 : 422;
++            jhd_api_error('password_change_failed', $message, $status);
++        }
++        // همهٔ نشست‌ها/توکن‌ها باطل می‌شوند؛ خود این درخواست‌دهنده هم دوباره وارد می‌شود.
++        jhd_api_revoke_tokens((int)$user['id']);
++        jhd_api_data(['changed' => true, 'reauthenticated_required' => true]);
++
++    // ─── خروج امن ───────────────────────────────────────────────────
++    case 'logout':
++        jhd_api_method(['POST']);
++        $user = jhd_api_user(true);
++        jhd_api_revoke_tokens((int)$user['id'], jhd_api_bearer_token());
++        jhd_api_data(['logged_out' => true]);
++
++    default:
++        jhd_api_error('not_found', 'مسیر درخواستی وجود ندارد.', 404);
++}
+diff --git a/api/mobile/common.php b/api/mobile/common.php
+new file mode 100644
+index 0000000..7cef432
+--- /dev/null
++++ b/api/mobile/common.php
+@@ -0,0 +1,776 @@
++<?php
++/**
++ * api/mobile/common.php — مشترکات API بومی موبایل (جامعة‌الهدی)
++ *
++ * این خانواده از مسیرها فقط JSON برمی‌گرداند و قرارداد پایداری برای اپلیکیشن
++ * اندروید فراهم می‌کند:
++ *   • محتوای عمومی منتشرشده: خانه، فهرست‌ها، جزئیات، رسانه، جست‌وجو، موضوع‌ها
++ *   • احراز هویت عضو با توکن Bearer (بدون cookie و بدون نشست وب)
++ *   • لایک امن با قید یکتایی سمت دیتابیس (بدون شمارندهٔ قابل جعل)
++ *
++ * قواعد امنیتی:
++ *   • هیچ رمز، کلید یا اطلاعات مدیریتی در پاسخ‌ها داده نمی‌شود.
++ *   • توکن‌ها فقط به‌صورت hash (sha256) ذخیره می‌شوند؛ خود توکن در دیتابیس نیست.
++ *   • نقش هرگز از ورودی خوانده نمی‌شود؛ ثبت‌نام همیشه role = user می‌سازد.
++ *   • فقط محتوای published/فعال به اپ نشان داده می‌شود.
++ *   • POSTهای عضو فقط با Bearer معتبر؛ عملیات عضو نیازی به CSRF cookie ندارند
++ *     (Authority در هدر Authorization است، نه cookie محیطی).
++ */
++declare(strict_types=1);
++
++require_once __DIR__ . '/../../config/config.php';
++require_once __DIR__ . '/../../config/database.php';
++require_once __DIR__ . '/../../includes/functions.php';
++require_once __DIR__ . '/../../includes/auth.php';
++require_once __DIR__ . '/../../includes/identity.php';
++require_once __DIR__ . '/../../includes/member-auth.php';
++require_once __DIR__ . '/../../includes/media.php';
++
++// ─── پاسخ JSON ───────────────────────────────────────────────────────────────
++
++/** هدرهای امن و ثابت همهٔ پاسخ‌های API موبایل. */
++function jhd_api_headers(): void {
++    header('Content-Type: application/json; charset=utf-8');
++    header('X-Content-Type-Options: nosniff');
++    header('Cache-Control: no-store');
++}
++
++/**
++ * @param array<string,mixed> $payload
++ */
++function jhd_api_json(array $payload, int $status = 200): never {
++    http_response_code($status);
++    jhd_api_headers();
++    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
++    exit;
++}
++
++/**
++ * @param list<array<string,mixed>> $items
++ * @param array<string,mixed> $meta
++ */
++function jhd_api_list(array $items, array $meta = [], int $status = 200): never {
++    jhd_api_json(['ok' => true, 'items' => $items, 'meta' => $meta], $status);
++}
++
++/**
++ * @param array<string,mixed> $data
++ */
++function jhd_api_data(array $data, array $meta = [], int $status = 200): never {
++    jhd_api_json(['ok' => true, 'data' => $data, 'meta' => $meta], $status);
++}
++
++function jhd_api_error(string $code, string $message, int $status = 400, array $extra = []): never {
++    jhd_api_json(array_merge(['ok' => false, 'error' => $code, 'message' => $message], $extra), $status);
++}
++
++function jhd_api_method(array $allowed): void {
++    $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
++    if ($method === 'OPTIONS') {
++        header('Allow: ' . implode(', ', $allowed) . ', OPTIONS');
++        http_response_code(204);
++        exit;
++    }
++    if (!in_array($method, $allowed, true)) {
++        header('Allow: ' . implode(', ', $allowed) . ', OPTIONS');
++        jhd_api_error('method_not_allowed', 'روش درخواست مجاز نیست.', 405);
++    }
++}
++
++/** بدنهٔ JSON یا فرم درخواست؛ حداکثر ۶۴ کیلوبایت. */
++function jhd_api_body(): array {
++    $raw = file_get_contents('php://input');
++    if ($raw === false || $raw === '') return $_POST;
++    if (strlen($raw) > 64 * 1024) jhd_api_error('payload_too_large', 'حجم درخواست بیش از حد مجاز است.', 413);
++    $contentType = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? ''));
++    if (str_contains($contentType, 'application/json') || str_starts_with(ltrim($raw), '{') || str_starts_with(ltrim($raw), '[')) {
++        try {
++            $decoded = json_decode($raw, true, 8, JSON_THROW_ON_ERROR);
++        } catch (Throwable $e) {
++            jhd_api_error('invalid_json', 'بدنهٔ درخواست JSON معتبر نیست.', 400);
++        }
++        if (!is_array($decoded)) jhd_api_error('invalid_json', 'بدنهٔ درخواست JSON معتبر نیست.', 400);
++        return $decoded;
++    }
++    $form = [];
++    parse_str($raw, $form);
++    return is_array($form) ? $form : [];
++}
++
++/** مقدار رشته‌ای تمیز از آرایهٔ ورودی. */
++function jhd_api_str(array $body, string $key, int $max = 500): string {
++    $value = $body[$key] ?? '';
++    if (!is_string($value) && !is_numeric($value)) return '';
++    $value = trim((string)$value);
++    $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/u', '', $value) ?? '';
++    return mb_substr($value, 0, $max, 'UTF-8');
++}
++
++function jhd_api_int(array $body, string $key, int $default = 0): int {
++    $value = $body[$key] ?? null;
++    if (is_int($value)) return $value;
++    if (is_string($value) && preg_match('/^-?\d+$/', $value)) return (int)$value;
++    return $default;
++}
++
++/** صفحه‌بندی یکنواخت. */
++function jhd_api_page_params(array $source = []): array {
++    $page = max(1, jhd_api_int($source, 'page', 1));
++    $perPage = jhd_api_int($source, 'per_page', 20);
++    $perPage = max(5, min(50, $perPage));
++    return [$page, $perPage, ($page - 1) * $perPage];
++}
++
++function jhd_api_page_meta(int $page, int $perPage, int $total): array {
++    $totalPages = $total > 0 ? (int)ceil($total / $perPage) : 0;
++    return [
++        'page' => $page,
++        'per_page' => $perPage,
++        'total' => $total,
++        'total_pages' => $totalPages,
++        'has_more' => $page < $totalPages,
++    ];
++}
++
++// ─── اسکیمای موبایل (idempotent؛ هیچ داده‌ای حذف نمی‌شود) ─────────────────────
++
++function jhd_mobile_api_schema(): void {
++    static $done = false;
++    if ($done) return;
++    $done = true;
++    try {
++        $db = getDB();
++        $driver = databaseDriver();
++        if ($driver === 'mysql') {
++            $db->exec("CREATE TABLE IF NOT EXISTS api_tokens (
++                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
++                user_id INT NOT NULL,
++                token_hash VARCHAR(64) NOT NULL,
++                device_label VARCHAR(120) NOT NULL DEFAULT '',
++                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++                last_used_at DATETIME NULL,
++                expires_at DATETIME NOT NULL,
++                revoked_at DATETIME NULL,
++                UNIQUE KEY api_tokens_hash (token_hash),
++                KEY api_tokens_user (user_id)
++            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
++            $db->exec("CREATE TABLE IF NOT EXISTS content_likes (
++                user_id INT NOT NULL,
++                ref_type VARCHAR(20) NOT NULL,
++                ref_id INT NOT NULL,
++                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++                PRIMARY KEY (user_id, ref_type, ref_id),
++                KEY content_likes_ref (ref_type, ref_id)
++            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
++        } elseif ($driver === 'sqlite') {
++            $db->exec("CREATE TABLE IF NOT EXISTS api_tokens (
++                id INTEGER PRIMARY KEY AUTOINCREMENT,
++                user_id INTEGER NOT NULL,
++                token_hash TEXT NOT NULL UNIQUE,
++                device_label TEXT NOT NULL DEFAULT '',
++                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
++                last_used_at TEXT NULL,
++                expires_at TEXT NOT NULL,
++                revoked_at TEXT NULL
++            )");
++            $db->exec('CREATE INDEX IF NOT EXISTS api_tokens_user ON api_tokens(user_id)');
++            $db->exec("CREATE TABLE IF NOT EXISTS content_likes (
++                user_id INTEGER NOT NULL,
++                ref_type TEXT NOT NULL,
++                ref_id INTEGER NOT NULL,
++                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
++                PRIMARY KEY (user_id, ref_type, ref_id)
++            )");
++            $db->exec('CREATE INDEX IF NOT EXISTS content_likes_ref ON content_likes(ref_type, ref_id)');
++        } else {
++            $db->exec("CREATE TABLE IF NOT EXISTS api_tokens (
++                id BIGSERIAL PRIMARY KEY,
++                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++                token_hash VARCHAR(64) NOT NULL UNIQUE,
++                device_label VARCHAR(120) NOT NULL DEFAULT '',
++                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++                last_used_at TIMESTAMPTZ NULL,
++                expires_at TIMESTAMPTZ NOT NULL,
++                revoked_at TIMESTAMPTZ NULL
++            )");
++            $db->exec('CREATE INDEX IF NOT EXISTS api_tokens_user ON api_tokens(user_id)');
++            $db->exec("CREATE TABLE IF NOT EXISTS content_likes (
++                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++                ref_type VARCHAR(20) NOT NULL,
++                ref_id INTEGER NOT NULL,
++                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++                PRIMARY KEY (user_id, ref_type, ref_id)
++            )");
++            $db->exec('CREATE INDEX IF NOT EXISTS content_likes_ref ON content_likes(ref_type, ref_id)');
++        }
++    } catch (Throwable $e) {
++        error_log('Mobile API schema ensure failed: ' . get_class($e));
++    }
++}
++
++// ─── توکن‌های دسترسی ─────────────────────────────────────────────────────────
++
++/** عمر توکن دسترسی: ۶۰ روز. */
++const JHD_API_TOKEN_TTL = 60 * 24 * 3600;
++
++/**
++ * ساخت توکن تازه. خود توکن فقط یک‌بار برمی‌گردد؛ در دیتابیس hash آن است.
++ *
++ * @return array{token:string,expires_at:string}
++ */
++function jhd_api_issue_token(int $userId, string $deviceLabel = ''): array {
++    jhd_mobile_api_schema();
++    $db = getDB();
++    $token = 'jh1_' . bin2hex(random_bytes(32));
++    // فقط hash کل توکن (با پیشوند) ذخیره می‌شود؛ خود توکن هرگز در دیتابیس نیست.
++    $hash = hash('sha256', $token);
++    $expires = time() + JHD_API_TOKEN_TTL;
++    $expiresSql = date('Y-m-d H:i:s', $expires);
++    $label = mb_substr(trim($deviceLabel), 0, 120, 'UTF-8');
++    if (databaseDriver() === 'mysql') {
++        $db->prepare('INSERT INTO api_tokens (user_id, token_hash, device_label, expires_at) VALUES (?, ?, ?, ?)')
++            ->execute([$userId, $hash, $label, $expiresSql]);
++    } elseif (databaseDriver() === 'sqlite') {
++        $db->prepare('INSERT INTO api_tokens (user_id, token_hash, device_label, expires_at) VALUES (?, ?, ?, ?)')
++            ->execute([$userId, $hash, $label, $expiresSql]);
++    } else {
++        $db->prepare('INSERT INTO api_tokens (user_id, token_hash, device_label, expires_at) VALUES (?, ?, ?, to_timestamp(?))')
++            ->execute([$userId, $hash, $label, $expires]);
++    }
++    return ['token' => $token, 'expires_at' => gmdate('c', $expires)];
++}
++
++/** باطل‌کردن همهٔ توکن‌های یک کاربر (تغییر رمز / خروج کامل). */
++function jhd_api_revoke_tokens(int $userId, ?string $rawToken = null): void {
++    jhd_mobile_api_schema();
++    $db = getDB();
++    if ($rawToken !== null) {
++        $db->prepare('UPDATE api_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND token_hash = ?')
++            ->execute([$userId, hash('sha256', $rawToken)]);
++        return;
++    }
++    $db->prepare('UPDATE api_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND revoked_at IS NULL')
++        ->execute([$userId]);
++}
++
++/** توکن Bearer درخواست جاری (بدون Bearer ⇒ null). */
++function jhd_api_bearer_token(): ?string {
++    $header = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
++    if ($header === '') {
++        // برخی میزبان‌ها Authorization را در هدر سفارشی می‌فرستند.
++        $header = (string)($_SERVER['HTTP_X_AUTHORIZATION'] ?? '');
++    }
++    if (!preg_match('/^\s*Bearer\s+(\S+)\s*$/i', $header, $m)) return null;
++    $token = $m[1];
++    return str_starts_with($token, 'jh1_') ? $token : null;
++}
++
++/**
++ * کاربر جاری از روی توکن Bearer. null ⇒ ناشناس/نامعتبر.
++ *
++ * @return array<string,mixed>|null
++ */
++function jhd_api_user(bool $required = false): ?array {
++    static $cache = false;
++    if ($cache !== false) return $cache ?: null;
++    $token = jhd_api_bearer_token();
++    if ($token === null) {
++        if ($required) jhd_api_error('unauthorized', 'برای این عملیات باید وارد حساب شوید.', 401);
++        $cache = null;
++        return null;
++    }
++    jhd_mobile_api_schema();
++    $db = getDB();
++    try {
++        $stmt = $db->prepare(
++            'SELECT t.id AS token_id, t.expires_at, t.revoked_at, u.* FROM api_tokens t
++             JOIN users u ON u.id = t.user_id
++             WHERE t.token_hash = ? LIMIT 1'
++        );
++        $stmt->execute([hash('sha256', $token)]);
++        $row = $stmt->fetch();
++    } catch (Throwable $e) {
++        error_log('Mobile token lookup failed: ' . get_class($e));
++        $row = false;
++    }
++    if (!$row) {
++        if ($required) jhd_api_error('unauthorized', 'نشست شما معتبر نیست؛ دوباره وارد شوید.', 401);
++        $cache = null;
++        return null;
++    }
++    if ($row['revoked_at'] !== null && $row['revoked_at'] !== '') {
++        if ($required) jhd_api_error('unauthorized', 'نشست شما باطل شده است؛ دوباره وارد شوید.', 401);
++        $cache = null;
++        return null;
++    }
++    $expires = strtotime((string)$row['expires_at']) ?: 0;
++    if ($expires < time()) {
++        if ($required) jhd_api_error('unauthorized', 'نشست شما منقضی شده است؛ دوباره وارد شوید.', 401);
++        $cache = null;
++        return null;
++    }
++    if ((int)$row['is_active'] !== 1) {
++        jhd_api_revoke_tokens((int)$row['id']);
++        if ($required) jhd_api_error('forbidden', 'حساب شما فعال نیست.', 403);
++        $cache = null;
++        return null;
++    }
++    $user = jhd_user_public($row);
++    $user['auth_version'] = (int)($row['auth_version'] ?? 1);
++    $user['token_id'] = (int)$row['token_id'];
++    // فعال‌سازی نرم زمان استفاده؛ شکست آن امنیت را دور نمی‌زند.
++    try {
++        $db->prepare('UPDATE api_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?')
++            ->execute([(int)$row['token_id']]);
++    } catch (Throwable $e) {
++    }
++    $cache = $user;
++    return $user;
++}
++
++/** نمای عمومی حساب برای خود کاربر (بدون هیچ رمز/توکنی). */
++function jhd_api_account(array $user): array {
++    return [
++        'id' => (int)$user['id'],
++        'full_name' => (string)$user['full_name'],
++        'username' => (string)$user['username'],
++        'email' => (string)$user['email'],
++        'phone' => (string)$user['phone'],
++        'country' => (string)$user['country'],
++        'country_code' => (string)$user['country_code'],
++        'role' => (string)$user['role'],
++        'must_change_password' => (int)$user['must_change_password'],
++        'created_at' => (string)$user['created_at'],
++        'last_login' => (string)$user['last_login'],
++    ];
++}
++
++// ─── لایک ────────────────────────────────────────────────────────────────────
++
++const JHD_API_LIKE_TYPES = ['post', 'book', 'lesson', 'media'];
++
++/** آیا این محتوا برای لایک موجود و منتشرشده است؟ */
++function jhd_api_content_exists(string $refType, int $refId): bool {
++    if ($refId < 1 || !in_array($refType, JHD_API_LIKE_TYPES, true)) return false;
++    try {
++        $db = getDB();
++        $sql = match ($refType) {
++            'post' => "SELECT COUNT(*) FROM posts WHERE id = ? AND status = 'published'",
++            'book' => "SELECT COUNT(*) FROM books WHERE id = ? AND status = 'published'",
++            'lesson' => "SELECT COUNT(*) FROM lessons WHERE id = ? AND status = 'published'",
++            default => "SELECT COUNT(*) FROM media_files m WHERE m.id = ? AND m.kind IN ('audio','video')
++                        AND ((m.ref_type = 'post' AND EXISTS (SELECT 1 FROM posts p WHERE p.id = m.ref_id AND p.status = 'published'))
++                          OR (m.ref_type = 'lesson' AND EXISTS (SELECT 1 FROM lessons l WHERE l.id = m.ref_id AND l.status = 'published'))
++                          OR (m.ref_type = 'book' AND EXISTS (SELECT 1 FROM books b WHERE b.id = m.ref_id AND b.status = 'published')))",
++        };
++        $stmt = $db->prepare($sql);
++        $stmt->execute([$refId]);
++        return (int)$stmt->fetchColumn() > 0;
++    } catch (Throwable $e) {
++        return false;
++    }
++}
++
++function jhd_api_like_count(string $refType, int $refId): int {
++    try {
++        $stmt = getDB()->prepare('SELECT COUNT(*) FROM content_likes WHERE ref_type = ? AND ref_id = ?');
++        $stmt->execute([$refType, $refId]);
++        return (int)$stmt->fetchColumn();
++    } catch (Throwable $e) {
++        return 0;
++    }
++}
++
++function jhd_api_viewer_liked(string $refType, int $refId, ?array $user): ?bool {
++    if ($user === null) return null;
++    try {
++        $stmt = getDB()->prepare('SELECT COUNT(*) FROM content_likes WHERE user_id = ? AND ref_type = ? AND ref_id = ?');
++        $stmt->execute([(int)$user['id'], $refType, $refId]);
++        return (int)$stmt->fetchColumn() > 0;
++    } catch (Throwable $e) {
++        return false;
++    }
++}
++
++/**
++ * @return array{like_count:int,liked:?bool}
++ */
++function jhd_api_like_state(string $refType, int $refId, ?array $user): array {
++    return [
++        'like_count' => jhd_api_like_count($refType, $refId),
++        'liked' => jhd_api_viewer_liked($refType, $refId, $user),
++    ];
++}
++
++// ─── سریال‌ساز محتوا ─────────────────────────────────────────────────────────
++
++function jhd_api_abs(string $path): string {
++    if ($path === '') return '';
++    if (preg_match('~^https?://~i', $path)) return $path;
++    // نشانی‌های سایت (assets/uploads/مسیرها) با مبدأ پیکربندی‌شده یکی می‌شوند؛
++    // همان قاعدهٔ فید mobile-feed. نشانی نسبی هرگز به اپ برنمی‌گردد.
++    $siteOrigin = rtrim(SITE_URL, '/');
++    $basePath = trim(BASE_PATH, '/');
++    $basePrefix = $basePath !== '' ? '/' . $basePath : '';
++    return $siteOrigin . $basePrefix . '/' . ltrim($path, '/');
++}
++
++function jhd_api_img(?string $path): string {
++    $path = trim((string)$path);
++    if ($path === '') return '';
++    if (preg_match('~^https?://~i', $path)) return $path;
++    if (str_starts_with($path, '//')) return 'https:' . $path;
++    $url = imgUrl($path);
++    return jhd_api_abs($url !== '' ? $url : $path);
++}
++
++/** متن سادهٔ بدون HTML؛ برای نمایش کارت و جست‌وجو در اپ. */
++function jhd_api_text(?string $html, int $max = 8000): string {
++    $text = html_entity_decode(strip_tags((string)$html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
++    $text = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]/u', '', $text) ?? '';
++    $text = preg_replace('/[ \t]+/u', ' ', $text) ?? $text;
++    $text = preg_replace('/\n{3,}/u', "\n\n", $text) ?? $text;
++    return trim(mb_substr(trim($text), 0, $max, 'UTF-8'));
++}
++
++function jhd_api_html(?string $html): string {
++    return safeRichText((string)$html);
++}
++
++function jhd_api_date(?string $value): string {
++    $value = trim((string)$value);
++    if ($value === '') return '';
++    $ts = strtotime($value);
++    return $ts ? gmdate('c', $ts) : '';
++}
++
++function jhd_api_post_type(string $type): string {
++    $allowed = ['news', 'article', 'research', 'report', 'announcement', 'speech', 'program', 'religious', 'qa', 'book_note', 'event'];
++    return in_array($type, $allowed, true) ? $type : 'news';
++}
++
++/** نگاشت post_type به مسیر وب (برای لینک اشتراک‌گذاری). */
++function jhd_api_post_url(array $row): string {
++    $type = (string)($row['post_type'] ?? 'news');
++    $slug = trim((string)($row['slug'] ?? ''));
++    $path = match ($type) {
++        'article' => 'articles',
++        'research' => 'research',
++        'report' => 'reports',
++        'announcement' => 'announcements',
++        'event' => 'events',
++        'program' => 'programs',
++        'religious' => 'religious-activities',
++        'qa' => 'qa',
++        'speech' => 'speeches',
++        default => 'news',
++    };
++    return $slug !== '' ? jhd_api_abs($path . '/' . rawurlencode($slug)) : jhd_api_abs('post/' . (int)($row['id'] ?? 0));
++}
++
++/**
++ * @param array<string,mixed> $row
++ * @return array<string,mixed>
++ */
++function jhd_api_post_item(array $row, bool $detail = false, ?array $viewer = null): array {
++    $id = (int)($row['id'] ?? 0);
++    $contentHtml = (string)($row['content'] ?? '');
++    $summary = jhd_api_text((string)($row['summary'] ?? ''), 700);
++    $contentText = jhd_api_text($contentHtml, 12000);
++    if ($summary === '') $summary = mb_substr($contentText, 0, 520, 'UTF-8');
++    $item = [
++        'id' => $id,
++        'key' => 'post-' . $id,
++        'kind' => 'post',
++        'type' => jhd_api_post_type((string)($row['post_type'] ?? 'news')),
++        'slug' => (string)($row['slug'] ?? ''),
++        'title' => jhd_api_text((string)($row['title'] ?? ''), 200),
++        'summary' => $summary,
++        'author' => jhd_api_text((string)($row['author_name'] ?? ''), 120),
++        'speaker' => jhd_api_text((string)($row['speaker'] ?? ''), 120),
++        'category' => (($row['cat_name'] ?? '') !== '' && ($row['cat_name'] ?? null) !== null)
++            ? ['id' => (int)($row['category_id'] ?? 0), 'name' => (string)$row['cat_name'], 'slug' => (string)($row['cat_slug'] ?? '')]
++            : null,
++        'published_at' => jhd_api_date($row['published_at'] ?? null),
++        'created_at' => jhd_api_date($row['created_at'] ?? null),
++        'image_url' => jhd_api_img($row['featured_image'] ?? null),
++        'url' => jhd_api_post_url($row),
++    ];
++    if ($detail) {
++        $item['content_text'] = $contentText;
++        $item['content_html'] = jhd_api_html($contentHtml);
++        $item['sources'] = jhd_api_text((string)($row['sources'] ?? ''), 2000);
++        try {
++            $stmt = getDB()->prepare('SELECT id, image_path, alt_text FROM post_images WHERE post_id = ? ORDER BY sort_order ASC, id ASC');
++            $stmt->execute([$id]);
++            $gallery = [];
++            foreach ($stmt->fetchAll() as $image) {
++                $url = jhd_api_img((string)$image['image_path']);
++                if ($url === '') continue;
++                $gallery[] = ['id' => (int)$image['id'], 'url' => $url, 'alt' => jhd_api_text((string)($image['alt_text'] ?? ''), 200)];
++            }
++            $item['gallery'] = $gallery;
++        } catch (Throwable $e) {
++            $item['gallery'] = [];
++        }
++        $attachments = [];
++        foreach (['audio', 'video', 'document'] as $kind) {
++            foreach (getMediaFor('post', $id, $kind) as $media) {
++                $attachments[] = jhd_api_attachment_row($media, $kind);
++            }
++        }
++        $item['attachments'] = $attachments;
++        $item['featured_video_url'] = jhd_api_img($row['featured_video'] ?? null);
++        try {
++            $stmt = getDB()->prepare('SELECT t.id, t.name, t.slug FROM post_topics pt JOIN topics t ON t.id = pt.topic_id WHERE pt.post_id = ? AND t.is_active = 1 ORDER BY pt.is_primary DESC, t.sort_order ASC');
++            $stmt->execute([$id]);
++            $item['topics'] = array_map(static fn($t): array => [
++                'id' => (int)$t['id'], 'name' => (string)$t['name'], 'slug' => (string)$t['slug'],
++            ], $stmt->fetchAll());
++        } catch (Throwable $e) {
++            $item['topics'] = [];
++        }
++    }
++    return array_merge($item, jhd_api_like_state('post', $id, $viewer));
++}
++
++/**
++ * @param array<string,mixed> $media
++ * @return array<string,mixed>
++ */
++function jhd_api_attachment_row(array $media, string $fallbackKind = ''): array {
++    $kind = (string)($media['kind'] ?? $fallbackKind);
++    if (!in_array($kind, ['audio', 'video', 'document', 'image'], true)) $kind = $fallbackKind;
++    $path = (string)($media['file_path'] ?? '');
++    $url = jhd_api_img($path);
++    return [
++        'id' => (int)($media['id'] ?? 0),
++        'kind' => $kind,
++        'title' => jhd_api_text((string)($media['title'] ?? ''), 200),
++        'url' => $url,
++        'size' => (int)($media['size'] ?? 0),
++    ];
++}
++
++/**
++ * @param array<string,mixed> $row
++ * @return array<string,mixed>
++ */
++function jhd_api_book_item(array $row, bool $detail = false, ?array $viewer = null): array {
++    $id = (int)($row['id'] ?? 0);
++    $slug = trim((string)($row['slug'] ?? ''));
++    $item = [
++        'id' => $id,
++        'key' => 'book-' . $id,
++        'kind' => 'book',
++        'type' => 'book',
++        'slug' => $slug,
++        'title' => jhd_api_text((string)($row['title'] ?? ''), 220),
++        'summary' => jhd_api_text((string)($row['description'] ?? ''), 700),
++        'author' => jhd_api_text((string)($row['author'] ?? ''), 120),
++        'translator' => jhd_api_text((string)($row['translator'] ?? ''), 120),
++        'publisher' => jhd_api_text((string)($row['publisher'] ?? ''), 120),
++        'publish_year' => jhd_api_text((string)($row['publish_year'] ?? ''), 20),
++        'pages' => ($row['pages'] ?? null) !== null && ($row['pages'] ?? '') !== '' ? (int)$row['pages'] : null,
++        'published_at' => jhd_api_date($row['created_at'] ?? null),
++        'created_at' => jhd_api_date($row['created_at'] ?? null),
++        'image_url' => jhd_api_img($row['cover_image'] ?? null),
++        'url' => $slug !== '' ? jhd_api_abs('books/' . rawurlencode($slug)) : jhd_api_abs('books/' . $id),
++    ];
++    if ($detail) {
++        $item['content_text'] = jhd_api_text((string)($row['description'] ?? ''), 12000);
++        $item['content_html'] = jhd_api_html((string)($row['description'] ?? ''));
++        $item['toc'] = jhd_api_text((string)($row['toc'] ?? ''), 8000);
++        $item['pdf_url'] = jhd_api_img($row['pdf_file'] ?? null);
++        $item['word_url'] = jhd_api_img($row['word_file'] ?? null);
++        $attachments = [];
++        foreach (getMediaFor('book', $id, 'document') as $media) {
++            $attachments[] = jhd_api_attachment_row($media, 'document');
++        }
++        foreach (getMediaFor('book', $id, 'audio') as $media) {
++            $attachments[] = jhd_api_attachment_row($media, 'audio');
++        }
++        $item['attachments'] = $attachments;
++        try {
++            $stmt = getDB()->prepare('SELECT t.id, t.name, t.slug FROM book_topics bt JOIN topics t ON t.id = bt.topic_id WHERE bt.book_id = ? AND t.is_active = 1 ORDER BY t.sort_order ASC');
++            $stmt->execute([$id]);
++            $item['topics'] = array_map(static fn($t): array => [
++                'id' => (int)$t['id'], 'name' => (string)$t['name'], 'slug' => (string)$t['slug'],
++            ], $stmt->fetchAll());
++        } catch (Throwable $e) {
++            $item['topics'] = [];
++        }
++    }
++    return array_merge($item, jhd_api_like_state('book', $id, $viewer));
++}
++
++/**
++ * @param array<string,mixed> $row
++ * @return array<string,mixed>
++ */
++function jhd_api_lesson_item(array $row, bool $detail = false, ?array $viewer = null): array {
++    $id = (int)($row['id'] ?? 0);
++    $slug = trim((string)($row['slug'] ?? ''));
++    $contentHtml = (string)($row['content'] ?? '');
++    $summary = jhd_api_text((string)($row['summary'] ?? ''), 700);
++    $contentText = jhd_api_text($contentHtml, 12000);
++    if ($summary === '') $summary = mb_substr($contentText, 0, 520, 'UTF-8');
++    $item = [
++        'id' => $id,
++        'key' => 'lesson-' . $id,
++        'kind' => 'lesson',
++        'type' => 'lesson',
++        'slug' => $slug,
++        'title' => jhd_api_text((string)($row['title'] ?? ''), 220),
++        'summary' => $summary,
++        'author' => jhd_api_text((string)($row['teacher'] ?? ''), 120),
++        'subject' => jhd_api_text((string)($row['subject'] ?? ''), 150),
++        'level' => (string)($row['level'] ?? ''),
++        'lesson_number' => ($row['lesson_number'] ?? null) !== null && ($row['lesson_number'] ?? '') !== '' ? (int)$row['lesson_number'] : null,
++        'collection_id' => (int)($row['collection_id'] ?? 0),
++        'collection_title' => jhd_api_text((string)($row['collection_title'] ?? ''), 160),
++        'volume_id' => (int)($row['volume_id'] ?? 0),
++        'volume_title' => jhd_api_text((string)($row['volume_title'] ?? ''), 160),
++        'published_at' => jhd_api_date($row['created_at'] ?? null),
++        'created_at' => jhd_api_date($row['created_at'] ?? null),
++        'image_url' => jhd_api_img($row['featured_image'] ?? null),
++        'url' => $slug !== '' ? jhd_api_abs('lesson/' . rawurlencode($slug)) : jhd_api_abs('lessons'),
++    ];
++    if ($detail) {
++        $item['content_text'] = $contentText;
++        $item['content_html'] = jhd_api_html($contentHtml);
++        $item['sources'] = jhd_api_text((string)($row['sources'] ?? ''), 2000);
++        $item['audio_url'] = jhd_api_img($row['audio_file'] ?? null);
++        $item['video_url'] = jhd_api_img($row['video_file'] ?? null);
++        $item['pdf_url'] = jhd_api_img($row['pdf_file'] ?? null);
++        $attachments = [];
++        foreach (['audio', 'video', 'document'] as $kind) {
++            foreach (getMediaFor('lesson', $id, $kind) as $media) {
++                $attachments[] = jhd_api_attachment_row($media, $kind);
++            }
++        }
++        $item['attachments'] = $attachments;
++        try {
++            $stmt = getDB()->prepare('SELECT t.id, t.name, t.slug FROM lesson_topics lt JOIN topics t ON t.id = lt.topic_id WHERE lt.lesson_id = ? AND t.is_active = 1 ORDER BY t.sort_order ASC');
++            $stmt->execute([$id]);
++            $item['topics'] = array_map(static fn($t): array => [
++                'id' => (int)$t['id'], 'name' => (string)$t['name'], 'slug' => (string)$t['slug'],
++            ], $stmt->fetchAll());
++        } catch (Throwable $e) {
++            $item['topics'] = [];
++        }
++    }
++    return array_merge($item, jhd_api_like_state('lesson', $id, $viewer));
++}
++
++/**
++ * @param array<string,mixed> $row
++ * @return array<string,mixed>
++ */
++function jhd_api_media_item(array $row, bool $detail = false, ?array $viewer = null): array {
++    $id = (int)($row['id'] ?? 0);
++    $kind = (string)($row['kind'] ?? '');
++    if (!in_array($kind, ['audio', 'video'], true)) $kind = 'audio';
++    $parentTitle = jhd_api_text((string)($row['parent_title'] ?? ''), 200);
++    $title = jhd_api_text((string)($row['title'] ?? ''), 200);
++    if ($title === '') $title = $parentTitle;
++    $item = [
++        'id' => $id,
++        'key' => 'media-' . $kind . '-' . $id,
++        'kind' => 'media',
++        'type' => $kind,
++        'slug' => '',
++        'title' => $title,
++        'summary' => $parentTitle !== '' ? ('رسانهٔ مرتبط با: ' . $parentTitle) : '',
++        'author' => jhd_api_text((string)($row['author'] ?? ''), 120),
++        'parent' => [
++            'kind' => (string)($row['ref_type'] ?? ''),
++            'id' => (int)($row['ref_id'] ?? 0),
++            'title' => $parentTitle,
++            'url' => (string)($row['parent_url'] ?? ''),
++        ],
++        'published_at' => jhd_api_date($row['created_at'] ?? null),
++        'created_at' => jhd_api_date($row['created_at'] ?? null),
++        'image_url' => jhd_api_img($row['featured_image'] ?? null),
++        'media_url' => jhd_api_img($row['file_path'] ?? null),
++        'url' => jhd_api_abs(($kind === 'video' ? 'video/' : 'audio/') . $id),
++        'size' => (int)($row['size'] ?? 0),
++    ];
++    return array_merge($item, jhd_api_like_state('media', $id, $viewer));
++}
++
++/**
++ * @param array<string,mixed> $row
++ * @return array<string,mixed>
++ */
++function jhd_api_topic_item(array $row): array {
++    $id = (int)($row['id'] ?? 0);
++    $slug = trim((string)($row['slug'] ?? ''));
++    return [
++        'id' => $id,
++        'key' => 'topic-' . $id,
++        'kind' => 'topic',
++        'type' => 'topic',
++        'slug' => $slug,
++        'parent_id' => (int)($row['parent_id'] ?? 0),
++        'title' => jhd_api_text((string)($row['name'] ?? ''), 160),
++        'summary' => jhd_api_text((string)($row['intro'] ?? $row['description'] ?? ''), 700),
++        'image_url' => jhd_api_img($row['cover_image'] ?? null),
++        'url' => $slug !== '' ? jhd_api_abs('topics/' . rawurlencode($slug)) : jhd_api_abs('topics'),
++    ];
++}
++
++/**
++ * @param array<string,mixed> $row
++ * @return array<string,mixed>
++ */
++function jhd_api_collection_item(array $row): array {
++    $id = (int)($row['id'] ?? 0);
++    $slug = trim((string)($row['slug'] ?? ''));
++    return [
++        'id' => $id,
++        'key' => 'collection-' . $id,
++        'kind' => 'collection',
++        'type' => 'collection',
++        'slug' => $slug,
++        'title' => jhd_api_text((string)($row['title'] ?? ''), 200),
++        'summary' => jhd_api_text((string)($row['description'] ?? ''), 700),
++        'image_url' => jhd_api_img($row['cover_image'] ?? null),
++        'lesson_count' => (int)($row['lesson_count'] ?? 0),
++        'url' => $slug !== '' ? jhd_api_abs('lessons/' . rawurlencode($slug)) : jhd_api_abs('lessons'),
++    ];
++}
++
++/** تازه‌ترین درس‌های منتشرشده (برای صفحهٔ اصلی اپ). */
++function jhd_api_recent_lessons(int $limit): array {
++    try {
++        $limit = max(1, min(50, $limit));
++        $stmt = getDB()->prepare(
++            "SELECT l.*, c.title AS collection_title, v.title AS volume_title
++             FROM lessons l
++             LEFT JOIN lesson_collections c ON c.id = l.collection_id
++             LEFT JOIN lesson_volumes v ON v.id = l.volume_id
++             WHERE l.status = 'published'
++             ORDER BY l.is_featured DESC, l.created_at DESC, l.id DESC
++             LIMIT $limit"
++        );
++        $stmt->execute();
++        return $stmt->fetchAll();
++    } catch (Throwable $e) {
++        return [];
++    }
++}
++
++/** اطلاعات پایهٔ سایت برای سربرگ اپ (لوگو، نام، تماس). */
++function jhd_api_site_info(): array {
++    return [
++        'name' => SITE_NAME,
++        'slogan' => SITE_SLOGAN,
++        'description' => SITE_DESCRIPTION,
++        'logo_url' => jhd_api_abs(SITE_LOGO_PATH),
++        'url' => rtrim(SITE_URL, '/') . (BASE_PATH !== '' ? BASE_PATH : ''),
++        'email' => getSetting('site_email', SITE_EMAIL),
++        'phone' => getSetting('phone', SITE_PHONE),
++        'address' => getSetting('address', SITE_ADDRESS),
++    ];
++}
+diff --git a/api/mobile/index.php b/api/mobile/index.php
+new file mode 100644
+index 0000000..5436fb4
+--- /dev/null
++++ b/api/mobile/index.php
+@@ -0,0 +1,587 @@
++<?php
++/**
++ * api/mobile/index.php — dispatcher محتوای عمومی API موبایل
++ *
++ * هر درخواست از مسیر allowlist شده در config/routes.php با پارامتر `resource`
++ * به همین فایل می‌رسد؛ هیچ فایل دیگری اجرا نمی‌شود. فقط GET/HEAD (و برای
++ * تماس، POST) پذیرفته می‌شود. پاسخ‌ها فقط JSON است.
++ */
++declare(strict_types=1);
++
++require_once __DIR__ . '/common.php';
++
++$resource = (string)($_GET['resource'] ?? '');
++$viewer = null; // کاربر واردشده در صورت وجود؛ برای وضعیت لایک
++
++switch ($resource) {
++    // ─── سلامت سامانه ────────────────────────────────────────────────
++    case 'health':
++        jhd_api_method(['GET', 'HEAD']);
++        $dbReady = false;
++        try {
++            $db = getDB();
++            $dbReady = $db !== null && (int)$db->query('SELECT 1')->fetchColumn() === 1;
++        } catch (Throwable $e) {
++            $dbReady = false;
++        }
++        jhd_api_data(['status' => 'ok', 'database' => $dbReady, 'time' => gmdate('c')]);
++
++    // ─── صفحهٔ اصلی (بخش‌های تجمیعی) ─────────────────────────────────
++    case 'home':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        $sectionLimit = min(10, max(3, jhd_api_int($_GET, 'limit', 6)));
++
++        $featured = array_map(static fn($p): array => jhd_api_post_item($p, false, $viewer),
++            getPosts(['featured' => 1, 'limit' => $sectionLimit, 'offset' => 0, 'sort' => 'newest']));
++
++        $banners = [];
++        foreach (getActiveBanners(5) as $banner) {
++            $link = trim((string)($banner['link'] ?? $banner['link_url'] ?? ''));
++            $banners[] = [
++                'id' => (int)($banner['id'] ?? 0),
++                'title' => jhd_api_text((string)($banner['title'] ?? ''), 200),
++                'content' => jhd_api_text((string)($banner['content'] ?? $banner['description'] ?? ''), 700),
++                'image_url' => jhd_api_img($banner['image'] ?? null),
++                'link_url' => $link !== '' ? (preg_match('~^https?://~i', $link) ? $link : jhd_api_abs($link)) : '',
++                'link_text' => jhd_api_text((string)($banner['link_text'] ?? $banner['button_text'] ?? ''), 40),
++                'banner_type' => (string)($banner['banner_type'] ?? 'info'),
++            ];
++        }
++
++        $byType = static function (array $types, int $limit) use ($viewer): array {
++            return array_map(static fn($p): array => jhd_api_post_item($p, false, $viewer),
++                getPosts(['types' => $types, 'limit' => $limit, 'offset' => 0, 'sort' => 'newest']));
++        };
++
++        $sections = [
++            'news' => $byType(['news'], $sectionLimit),
++            'announcements' => $byType(['announcement'], $sectionLimit),
++            'events' => $byType(['program', 'religious', 'announcement'], $sectionLimit),
++            'articles' => $byType(['article'], $sectionLimit),
++            'research' => $byType(['research', 'report'], $sectionLimit),
++            'speeches' => $byType(['speech', 'qa', 'religious'], $sectionLimit),
++            'books' => array_map(static fn($b): array => jhd_api_book_item($b, false, $viewer),
++                getBooks(['limit' => $sectionLimit, 'offset' => 0])),
++            'lessons' => array_map(static fn($l): array => jhd_api_lesson_item($l, false, $viewer),
++                jhd_api_recent_lessons($sectionLimit)),
++            'topics' => array_map(static fn($t): array => jhd_api_topic_item($t),
++                getTopics(['active' => 1, 'limit' => $sectionLimit])),
++        ];
++
++        // رسانه‌های اخیر (صوت/ویدیو) با فیلتر منتشرشده — همان قاعدهٔ mobile-feed.
++        $sections['media'] = [];
++        try {
++            $stmt = getDB()->prepare(
++                "SELECT m.*, COALESCE(p.title, l.title, '') AS parent_title,
++                        COALESCE(p.author_name, p.speaker, l.teacher, '') AS author,
++                        COALESCE(p.featured_image, l.featured_image, '') AS featured_image,
++                        COALESCE(p.slug, l.slug, '') AS parent_slug,
++                        f.size AS size
++                 FROM media_files m
++                 LEFT JOIN posts p ON m.ref_type = 'post' AND p.id = m.ref_id AND p.status = 'published'
++                 LEFT JOIN lessons l ON m.ref_type = 'lesson' AND l.id = m.ref_id AND l.status = 'published'
++                 LEFT JOIN stored_files f ON f.url = m.file_path
++                 WHERE m.kind IN ('audio', 'video')
++                   AND ((m.ref_type = 'post' AND p.id IS NOT NULL) OR (m.ref_type = 'lesson' AND l.id IS NOT NULL))
++                 ORDER BY m.created_at DESC, m.id DESC
++                 LIMIT " . (int)min(12, $sectionLimit * 2)
++            );
++            $stmt->execute();
++            foreach ($stmt->fetchAll() as $media) {
++                $sections['media'][] = jhd_api_media_item($media, false, $viewer);
++            }
++        } catch (Throwable $e) {
++            error_log('Mobile home media unavailable: ' . get_class($e));
++        }
++
++        jhd_api_data([
++            'site' => jhd_api_site_info(),
++            'banners' => $banners,
++            'featured' => $featured,
++            'sections' => $sections,
++        ], ['refreshed_at' => gmdate('c')]);
++
++    // ─── فهرست مطالب (اخبار، مقاله، پژوهش، …) ─────────────────────────
++    case 'posts':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        $type = (string)($_GET['type'] ?? 'all');
++        $allowedTypes = ['all', 'news', 'article', 'research', 'report', 'announcement', 'event', 'program', 'religious', 'qa', 'speech'];
++        if (!in_array($type, $allowedTypes, true)) {
++            jhd_api_error('invalid_type', 'نوع محتوای درخواستی معتبر نیست.', 422);
++        }
++        [$page, $perPage, $offset] = jhd_api_page_params($_GET);
++        $search = trim((string)($_GET['search'] ?? ''));
++        // نگاشت «رویداد» به همان ترکیب صفحهٔ /events وب (برنامه + فعالیت مذهبی + اطلاعیه).
++        $typeMap = [
++            'all' => ['news', 'article', 'research', 'report', 'announcement', 'program', 'religious', 'qa', 'speech'],
++            'event' => ['program', 'religious', 'announcement'],
++            'research' => ['research', 'report'],
++        ];
++        $opts = ['limit' => $perPage, 'offset' => $offset, 'sort' => 'newest'];
++        if (isset($typeMap[$type])) {
++            if ($type !== 'all') $opts['types'] = $typeMap[$type];
++            else $opts['types'] = $typeMap['all'];
++        } else {
++            $opts['type'] = $type;
++        }
++        if ($search !== '') $opts['search'] = $search;
++        $cat = jhd_api_int($_GET, 'category', 0);
++        if ($cat > 0) $opts['cat'] = $cat;
++        $topic = jhd_api_int($_GET, 'topic', 0);
++        if ($topic > 0) $opts['topic'] = $topic;
++        $items = array_map(static fn($p): array => jhd_api_post_item($p, false, $viewer), getPosts($opts));
++        jhd_api_list($items, jhd_api_page_meta($page, $perPage, countPosts($opts)));
++
++    // ─── جزئیات مطلب ─────────────────────────────────────────────────
++    case 'post':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        $id = jhd_api_int($_GET, 'id', 0);
++        $slug = trim((string)($_GET['slug'] ?? ''));
++        $row = $id > 0 ? getPost($id) : ($slug !== '' ? getPostBySlug($slug) : null);
++        if (!$row || (string)($row['status'] ?? '') !== 'published') {
++            jhd_api_error('not_found', 'مطلب درخواستی پیدا نشد.', 404);
++        }
++        jhd_api_data(jhd_api_post_item($row, true, $viewer));
++
++    // ─── کتاب‌ها ─────────────────────────────────────────────────────
++    case 'books':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        [$page, $perPage, $offset] = jhd_api_page_params($_GET);
++        $search = trim((string)($_GET['search'] ?? ''));
++        $opts = ['limit' => $perPage, 'offset' => $offset];
++        if ($search !== '') $opts['search'] = $search;
++        $topic = jhd_api_int($_GET, 'topic', 0);
++        if ($topic > 0) $opts['topic'] = $topic;
++        $items = array_map(static fn($b): array => jhd_api_book_item($b, false, $viewer), getBooks($opts));
++        jhd_api_list($items, jhd_api_page_meta($page, $perPage, countBooks($opts)));
++
++    case 'book':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        $id = jhd_api_int($_GET, 'id', 0);
++        $slug = trim((string)($_GET['slug'] ?? ''));
++        $row = $id > 0 ? getBookById($id) : ($slug !== '' ? getBookBySlug($slug) : null);
++        if (!$row || (string)($row['status'] ?? 'published') !== 'published') {
++            jhd_api_error('not_found', 'کتاب درخواستی پیدا نشد.', 404);
++        }
++        jhd_api_data(jhd_api_book_item($row, true, $viewer));
++
++    // ─── مجموعه‌های درسی ─────────────────────────────────────────────
++    case 'collections':
++        jhd_api_method(['GET', 'HEAD']);
++        $collections = [];
++        foreach (getLessonCollections(['active' => 1]) as $row) {
++            $item = jhd_api_collection_item($row);
++            try {
++                $stmt = getDB()->prepare('SELECT COUNT(*) FROM lessons WHERE collection_id = ? AND status = \'published\'');
++                $stmt->execute([(int)$row['id']]);
++                $item['lesson_count'] = (int)$stmt->fetchColumn();
++                $stmt = getDB()->prepare('SELECT id, title, slug, sort_order FROM lesson_volumes WHERE collection_id = ? ORDER BY sort_order ASC, id ASC');
++                $stmt->execute([(int)$row['id']]);
++                $item['volumes'] = array_map(static fn($v): array => [
++                    'id' => (int)$v['id'],
++                    'title' => jhd_api_text((string)$v['title'], 160),
++                    'slug' => (string)$v['slug'],
++                ], $stmt->fetchAll());
++            } catch (Throwable $e) {
++                $item['lesson_count'] = 0;
++                $item['volumes'] = [];
++            }
++            $collections[] = $item;
++        }
++        jhd_api_list($collections, ['total' => count($collections)]);
++
++    // ─── درس‌ها ──────────────────────────────────────────────────────
++    case 'lessons':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        [$page, $perPage, $offset] = jhd_api_page_params($_GET);
++        $collection = jhd_api_int($_GET, 'collection', 0);
++        $volume = jhd_api_int($_GET, 'volume', 0);
++        $search = trim((string)($_GET['search'] ?? ''));
++        try {
++            $db = getDB();
++            $where = ["l.status = 'published'"];
++            $params = [];
++            if ($collection > 0) { $where[] = 'l.collection_id = ?'; $params[] = $collection; }
++            if ($volume > 0) { $where[] = 'l.volume_id = ?'; $params[] = $volume; }
++            if ($search !== '') {
++                $where[] = '(l.title ILIKE ? OR l.summary ILIKE ? OR l.content ILIKE ?)';
++                $s = '%' . $search . '%';
++                array_push($params, $s, $s, $s);
++            }
++            $whereStr = implode(' AND ', $where);
++            $countStmt = $db->prepare("SELECT COUNT(*) FROM lessons l WHERE $whereStr");
++            $countStmt->execute($params);
++            $total = (int)$countStmt->fetchColumn();
++            $stmt = $db->prepare(
++                "SELECT l.*, c.title AS collection_title, v.title AS volume_title
++                 FROM lessons l
++                 LEFT JOIN lesson_collections c ON c.id = l.collection_id
++                 LEFT JOIN lesson_volumes v ON v.id = l.volume_id
++                 WHERE $whereStr
++                 ORDER BY l.is_featured DESC, l.collection_id ASC, l.lesson_number ASC, l.created_at DESC, l.id DESC
++                 LIMIT $perPage OFFSET $offset"
++            );
++            $stmt->execute($params);
++            $items = array_map(static fn($l): array => jhd_api_lesson_item($l, false, $viewer), $stmt->fetchAll());
++        } catch (Throwable $e) {
++            error_log('Mobile lessons listing failed: ' . get_class($e));
++            $items = [];
++            $total = 0;
++        }
++        jhd_api_list($items, jhd_api_page_meta($page, $perPage, $total));
++
++    case 'lesson':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        $id = jhd_api_int($_GET, 'id', 0);
++        $slug = trim((string)($_GET['slug'] ?? ''));
++        try {
++            $db = getDB();
++            if ($id > 0) {
++                $stmt = $db->prepare(
++                    "SELECT l.*, c.title AS collection_title, v.title AS volume_title
++                     FROM lessons l
++                     LEFT JOIN lesson_collections c ON c.id = l.collection_id
++                     LEFT JOIN lesson_volumes v ON v.id = l.volume_id
++                     WHERE l.id = ? LIMIT 1"
++                );
++                $stmt->execute([$id]);
++            } elseif ($slug !== '') {
++                $stmt = $db->prepare(
++                    "SELECT l.*, c.title AS collection_title, v.title AS volume_title
++                     FROM lessons l
++                     LEFT JOIN lesson_collections c ON c.id = l.collection_id
++                     LEFT JOIN lesson_volumes v ON v.id = l.volume_id
++                     WHERE l.slug = ? LIMIT 1"
++                );
++                $stmt->execute([$slug]);
++            } else {
++                jhd_api_error('invalid_request', 'شناسه یا نامک درس لازم است.', 422);
++            }
++            $row = $stmt->fetch();
++        } catch (Throwable $e) {
++            $row = false;
++        }
++        if (!$row || (string)($row['status'] ?? '') !== 'published') {
++            jhd_api_error('not_found', 'درس درخواستی پیدا نشد.', 404);
++        }
++        jhd_api_data(jhd_api_lesson_item($row, true, $viewer));
++
++    // ─── موضوع‌ها ────────────────────────────────────────────────────
++    case 'topics':
++        jhd_api_method(['GET', 'HEAD']);
++        $topics = [];
++        foreach (getTopics(['active' => 1, 'limit' => 100]) as $row) {
++            $topics[] = jhd_api_topic_item($row);
++        }
++        jhd_api_list($topics, ['total' => count($topics)]);
++
++    case 'topic':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        $id = jhd_api_int($_GET, 'id', 0);
++        $slug = trim((string)($_GET['slug'] ?? ''));
++        $row = $id > 0 ? getTopicById($id) : ($slug !== '' ? getTopicBySlug($slug) : null);
++        if (!$row || (int)($row['is_active'] ?? 0) !== 1) {
++            jhd_api_error('not_found', 'موضوع درخواستی پیدا نشد.', 404);
++        }
++        $item = jhd_api_topic_item($row);
++        $item['content_html'] = jhd_api_html((string)($row['intro'] ?? $row['description'] ?? ''));
++        $children = [];
++        foreach (getTopicChildren((int)$row['id']) as $child) {
++            $children[] = jhd_api_topic_item($child);
++        }
++        $item['children'] = $children;
++        // تازه‌ترین محتوای این موضوع (مطلب + درس + کتاب) برای نمایش در اپ.
++        [$page, $perPage, $offset] = jhd_api_page_params($_GET);
++        $posts = array_map(static fn($p): array => jhd_api_post_item($p, false, $viewer),
++            getPostsByTopic((int)$row['id'], ['limit' => $perPage, 'offset' => $offset]));
++        $item['posts'] = $posts;
++        $item['lessons'] = array_map(static fn($l): array => jhd_api_lesson_item($l, false, $viewer),
++            getLessonsByTopic((int)$row['id'], min(10, $perPage), 0));
++        $item['books'] = array_map(static fn($b): array => jhd_api_book_item($b, false, $viewer),
++            getBooksByTopic((int)$row['id'], min(10, $perPage), 0));
++        jhd_api_data($item, jhd_api_page_meta($page, $perPage, count($posts)));
++
++    // ─── رسانه (صوت/ویدیو) ──────────────────────────────────────────
++    case 'media':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        $kind = (string)($_GET['kind'] ?? 'all');
++        if (!in_array($kind, ['all', 'audio', 'video'], true)) {
++            jhd_api_error('invalid_kind', 'نوع رسانه معتبر نیست.', 422);
++        }
++        [$page, $perPage, $offset] = jhd_api_page_params($_GET);
++        try {
++            $db = getDB();
++            $kindClause = $kind === 'all' ? '' : ' AND m.kind = ?';
++            $params = $kind === 'all' ? [] : [$kind];
++            $countStmt = $db->prepare(
++                "SELECT COUNT(*) FROM media_files m
++                 LEFT JOIN posts p ON m.ref_type = 'post' AND p.id = m.ref_id AND p.status = 'published'
++                 LEFT JOIN lessons l ON m.ref_type = 'lesson' AND l.id = m.ref_id AND l.status = 'published'
++                 WHERE m.kind IN ('audio', 'video')
++                   AND ((m.ref_type = 'post' AND p.id IS NOT NULL) OR (m.ref_type = 'lesson' AND l.id IS NOT NULL))$kindClause"
++            );
++            $countStmt->execute($params);
++            $total = (int)$countStmt->fetchColumn();
++            $stmt = $db->prepare(
++                "SELECT m.*, COALESCE(p.title, l.title, '') AS parent_title,
++                        COALESCE(p.author_name, p.speaker, l.teacher, '') AS author,
++                        COALESCE(p.featured_image, l.featured_image, '') AS featured_image,
++                        f.size AS size
++                 FROM media_files m
++                 LEFT JOIN posts p ON m.ref_type = 'post' AND p.id = m.ref_id AND p.status = 'published'
++                 LEFT JOIN lessons l ON m.ref_type = 'lesson' AND l.id = m.ref_id AND l.status = 'published'
++                 LEFT JOIN stored_files f ON f.url = m.file_path
++                 WHERE m.kind IN ('audio', 'video')
++                   AND ((m.ref_type = 'post' AND p.id IS NOT NULL) OR (m.ref_type = 'lesson' AND l.id IS NOT NULL))$kindClause
++                 ORDER BY m.created_at DESC, m.id DESC
++                 LIMIT $perPage OFFSET $offset"
++            );
++            $stmt->execute($params);
++            $items = array_map(static fn($m): array => jhd_api_media_item($m, false, $viewer), $stmt->fetchAll());
++        } catch (Throwable $e) {
++            error_log('Mobile media listing failed: ' . get_class($e));
++            $items = [];
++            $total = 0;
++        }
++        jhd_api_list($items, jhd_api_page_meta($page, $perPage, $total));
++
++    case 'media-item':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        $kind = (string)($_GET['kind'] ?? '');
++        $id = jhd_api_int($_GET, 'id', 0);
++        if (!in_array($kind, ['audio', 'video'], true) || $id < 1) {
++            jhd_api_error('invalid_request', 'شناسه و نوع رسانه لازم است.', 422);
++        }
++        $row = getMediaById($id, $kind);
++        if (!$row) jhd_api_error('not_found', 'رسانهٔ درخواستی پیدا نشد.', 404);
++        // والد باید منتشرشده باشد تا رسانه نشت نکند.
++        $parentTitle = '';
++        $parentUrl = '';
++        $parentPublished = false;
++        try {
++            $db = getDB();
++            if ((string)$row['ref_type'] === 'post') {
++                $stmt = $db->prepare("SELECT title, slug, post_type, status FROM posts WHERE id = ?");
++                $stmt->execute([(int)$row['ref_id']]);
++                $parent = $stmt->fetch();
++                if ($parent && (string)$parent['status'] === 'published') {
++                    $parentPublished = true;
++                    $parentTitle = jhd_api_text((string)$parent['title'], 200);
++                    $parentUrl = jhd_api_post_url(['post_type' => $parent['post_type'], 'slug' => $parent['slug'], 'id' => (int)$row['ref_id']]);
++                }
++            } elseif ((string)$row['ref_type'] === 'lesson') {
++                $stmt = $db->prepare("SELECT title, slug, status, teacher, featured_image FROM lessons WHERE id = ?");
++                $stmt->execute([(int)$row['ref_id']]);
++                $parent = $stmt->fetch();
++                if ($parent && (string)$parent['status'] === 'published') {
++                    $parentPublished = true;
++                    $parentTitle = jhd_api_text((string)$parent['title'], 200);
++                    $row['featured_image'] = $parent['featured_image'];
++                    $row['author'] = $parent['teacher'];
++                    $parentUrl = $parent['slug'] !== '' ? jhd_api_abs('lesson/' . rawurlencode((string)$parent['slug'])) : jhd_api_abs('lessons');
++                }
++            }
++        } catch (Throwable $e) {
++            $parentPublished = false;
++        }
++        if (!$parentPublished) jhd_api_error('not_found', 'رسانهٔ درخواستی پیدا نشد.', 404);
++        $row['parent_title'] = $parentTitle;
++        $row['parent_url'] = $parentUrl;
++        try {
++            $stmt = getDB()->prepare('SELECT size FROM stored_files WHERE url = ? LIMIT 1');
++            $stmt->execute([(string)$row['file_path']]);
++            $size = $stmt->fetchColumn();
++            $row['size'] = $size !== false && $size !== null ? (int)$size : 0;
++        } catch (Throwable $e) {
++            $row['size'] = 0;
++        }
++        jhd_api_data(jhd_api_media_item($row, true, $viewer));
++
++    // ─── جست‌وجوی کامل ───────────────────────────────────────────────
++    case 'search':
++        jhd_api_method(['GET', 'HEAD']);
++        $viewer = jhd_api_user();
++        $q = trim((string)($_GET['q'] ?? ''));
++        $filter = trim((string)($_GET['type'] ?? 'all'));
++        $sort = (string)($_GET['sort'] ?? 'relevance');
++        $topicId = jhd_api_int($_GET, 'topic', 0);
++        [$page, $perPage, $offset] = jhd_api_page_params($_GET);
++        if (mb_strlen($q, 'UTF-8') > 200) {
++            jhd_api_error('invalid_query', 'عبارت جست‌وجو بیش از حد طولانی است.', 422);
++        }
++        if ($q === '' && $filter === 'all' && $topicId < 1) {
++            jhd_api_list([], jhd_api_page_meta($page, $perPage, 0));
++        }
++        $result = searchAll($q, $perPage, $offset, $filter, $topicId, $sort);
++        $items = [];
++        foreach ($result['results'] as $row) {
++            $target = (string)($row['target'] ?? 'post');
++            if ($target === 'media') {
++                $items[] = jhd_api_media_item([
++                    'id' => $row['id'],
++                    'kind' => (string)($row['media_kind'] ?? 'audio'),
++                    'title' => $row['title'],
++                    'file_path' => $row['featured_image'],
++                    'created_at' => $row['created_at'],
++                    'ref_type' => 'post',
++                    'ref_id' => 0,
++                    'parent_title' => jhd_api_text((string)($row['summary'] ?? ''), 200),
++                ], false, $viewer);
++                continue;
++            }
++            if ($target === 'book') {
++                $items[] = jhd_api_book_item([
++                    'id' => $row['id'],
++                    'title' => $row['title'],
++                    'slug' => $row['slug'],
++                    'description' => $row['summary'],
++                    'cover_image' => $row['featured_image'],
++                    'created_at' => $row['created_at'],
++                    'status' => 'published',
++                ], false, $viewer);
++                continue;
++            }
++            if ($target === 'lesson') {
++                $items[] = jhd_api_lesson_item([
++                    'id' => $row['id'],
++                    'title' => $row['title'],
++                    'slug' => $row['slug'],
++                    'summary' => $row['summary'],
++                    'content' => $row['content'],
++                    'featured_image' => $row['featured_image'],
++                    'created_at' => $row['created_at'],
++                    'status' => 'published',
++                ], false, $viewer);
++                continue;
++            }
++            if ($target === 'topic') {
++                $items[] = jhd_api_topic_item([
++                    'id' => $row['id'],
++                    'name' => $row['title'],
++                    'slug' => $row['slug'],
++                    'intro' => $row['summary'],
++                    'cover_image' => $row['featured_image'],
++                ]);
++                continue;
++            }
++            // post
++            $items[] = jhd_api_post_item([
++                'id' => $row['id'],
++                'title' => $row['title'],
++                'slug' => $row['slug'],
++                'summary' => $row['summary'],
++                'content' => $row['content'],
++                'featured_image' => $row['featured_image'],
++                'post_type' => $row['post_type'],
++                'published_at' => $row['published_at'],
++                'created_at' => $row['created_at'],
++                'status' => 'published',
++            ], false, $viewer);
++        }
++        jhd_api_list($items, array_merge(jhd_api_page_meta($page, $perPage, (int)$result['total']), ['query' => $q]));
++
++    // ─── دسته‌بندی‌ها ────────────────────────────────────────────────
++    case 'categories':
++        jhd_api_method(['GET', 'HEAD']);
++        $items = [];
++        foreach (getCategories() as $row) {
++            $items[] = [
++                'id' => (int)$row['id'],
++                'name' => jhd_api_text((string)$row['name'], 120),
++                'slug' => (string)$row['slug'],
++                'description' => jhd_api_text((string)($row['description'] ?? ''), 400),
++                'post_type' => (string)($row['post_type'] ?? 'all'),
++            ];
++        }
++        jhd_api_list($items, ['total' => count($items)]);
++
++    // ─── صفحه‌های درباره ما / تماس ───────────────────────────────────
++    case 'pages':
++        jhd_api_method(['GET', 'HEAD']);
++        $page = (string)($_GET['page'] ?? 'about');
++        if ($page === 'about') {
++            // همان محتوای «درباره ما»ٔ وب: معرفی ثابت + بنیان‌گذار + راه‌های تماس.
++            $hero = getPosts(['featured' => 1, 'limit' => 1, 'offset' => 0, 'sort' => 'newest'])[0] ?? null;
++            jhd_api_data([
++                'title' => 'درباره ما',
++                'name' => SITE_NAME,
++                'slogan' => SITE_SLOGAN,
++                'description' => SITE_DESCRIPTION,
++                'founder' => SITE_FOUNDER,
++                'logo_url' => jhd_api_abs(SITE_LOGO_PATH),
++                'highlight' => $hero !== null ? [
++                    'id' => (int)$hero['id'],
++                    'title' => jhd_api_text((string)$hero['title'], 200),
++                    'summary' => jhd_api_text((string)($hero['summary'] ?? ''), 400),
++                    'url' => jhd_api_post_url($hero),
++                    'image_url' => jhd_api_img($hero['featured_image'] ?? null),
++                ] : null,
++                'contact' => [
++                    'email' => getSetting('site_email', SITE_EMAIL),
++                    'phone' => getSetting('phone', SITE_PHONE),
++                    'address' => getSetting('address', SITE_ADDRESS),
++                    'telegram' => getSetting('social_telegram', ''),
++                    'youtube' => getSetting('social_youtube', ''),
++                    'instagram' => getSetting('social_instagram', ''),
++                ],
++            ]);
++        } elseif ($page === 'contact') {
++            jhd_api_data([
++                'title' => 'تماس با ما',
++                'email' => getSetting('site_email', SITE_EMAIL),
++                'phone' => getSetting('phone', SITE_PHONE),
++                'address' => getSetting('address', SITE_ADDRESS),
++                'form' => ['fields' => ['name', 'email', 'phone', 'subject', 'message']],
++            ]);
++        } else {
++            jhd_api_error('not_found', 'صفحهٔ درخواستی پیدا نشد.', 404);
++        }
++
++    // ─── ارسال پیام تماس ────────────────────────────────────────────
++    case 'contact':
++        jhd_api_method(['POST']);
++        $body = jhd_api_body();
++        $name = jhd_api_str($body, 'name', 200);
++        $email = jhd_api_str($body, 'email', 200);
++        $phone = jhd_api_str($body, 'phone', 50);
++        $subject = jhd_api_str($body, 'subject', 300);
++        $message = jhd_api_str($body, 'message', 4000);
++        if (mb_strlen($name, 'UTF-8') < 2) jhd_api_error('invalid_name', 'نام باید حداقل ۲ حرف باشد.', 422);
++        if ($subject === '') jhd_api_error('invalid_subject', 'موضوع پیام الزامی است.', 422);
++        if (mb_strlen($message, 'UTF-8') < 10) jhd_api_error('invalid_message', 'متن پیام باید حداقل ۱۰ کاراکتر باشد.', 422);
++        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) jhd_api_error('invalid_email', 'آدرس ایمیل معتبر نیست.', 422);
++        $ip = clientIp();
++        try {
++            $db = getDB();
++            // حداکثر ۳ پیام در ۳۰ دقیقه از هر IP — همان قاعدهٔ فرم وب.
++            $rateSql = match (databaseDriver()) {
++                'mysql' => 'SELECT COUNT(*) FROM contact_messages WHERE ip_address = ? AND created_at > (NOW() - INTERVAL 30 MINUTE)',
++                'sqlite' => "SELECT COUNT(*) FROM contact_messages WHERE ip_address = ? AND created_at > datetime('now', '-30 minutes')",
++                default => "SELECT COUNT(*) FROM contact_messages WHERE ip_address = ? AND created_at > (CURRENT_TIMESTAMP - INTERVAL '30 minutes')",
++            };
++            $stmt = $db->prepare($rateSql);
++            $stmt->execute([$ip]);
++            if ((int)$stmt->fetchColumn() >= 3) {
++                jhd_api_error('rate_limited', 'تعداد پیام‌ها بیش از حد مجاز است. کمی بعد دوباره تلاش کنید.', 429);
++            }
++            $db->prepare('INSERT INTO contact_messages (name, email, phone, subject, message, ip_address) VALUES (?, ?, ?, ?, ?, ?)')
++                ->execute([$name, $email, $phone, $subject, $message, $ip]);
++        } catch (Throwable $e) {
++            error_log('Mobile contact submit failed: ' . get_class($e));
++            jhd_api_error('unavailable', 'ارسال پیام در این لحظه ممکن نیست. بعداً دوباره تلاش کنید.', 503);
++        }
++        jhd_api_data(['sent' => true]);
++
++    default:
++        jhd_api_error('not_found', 'مسیر درخواستی وجود ندارد.', 404);
++}
+diff --git a/api/mobile/likes.php b/api/mobile/likes.php
+new file mode 100644
+index 0000000..43c413b
+--- /dev/null
++++ b/api/mobile/likes.php
+@@ -0,0 +1,99 @@
++<?php
++/**
++ * api/mobile/likes.php — لایک محتوا (عضو واردشده)
++ *
++ * طراحی ضد جعل و ضد تکرار:
++ *   • جدول content_likes قید یکتایی (user_id, ref_type, ref_id) دارد؛ ثبت تکراری
++ *     حتی با درخواست هم‌زمان، یک ردیف می‌سازد.
++ *   • شمارنده همیشه از COUNT(*) دیتابیس می‌آید؛ هیچ شمارندهٔ سمت کلاینت پذیرفته
++ *     نمی‌شود و هیچ فیلد like_count در POST خوانده نمی‌شود.
++ *   • like/unlike عملیات idempotent است: تکرار آن‌ها خطا نمی‌سازد و شماره را
++ *     دستکاری نمی‌کند.
++ *   • فقط محتوای منتشرشده قابل لایک است؛ نقش‌ها رعایت می‌شود و کاربر غیرفعال
++ *     نمی‌تواند عملیات انجام دهد.
++ */
++declare(strict_types=1);
++
++require_once __DIR__ . '/common.php';
++
++$method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
++
++if ($method === 'GET' || $method === 'HEAD') {
++    $refType = (string)($_GET['ref_type'] ?? '');
++    $refId = jhd_api_int($_GET, 'ref_id', 0);
++    if (!in_array($refType, JHD_API_LIKE_TYPES, true) || $refId < 1) {
++        jhd_api_error('invalid_request', 'نوع و شناسهٔ محتوا لازم است.', 422);
++    }
++    if (!jhd_api_content_exists($refType, $refId)) {
++        jhd_api_error('not_found', 'محتوای درخواستی پیدا نشد.', 404);
++    }
++    $viewer = jhd_api_user(); // اختیاری: ناشناس فقط شمارنده را می‌بیند
++    jhd_api_data([
++        'ref_type' => $refType,
++        'ref_id' => $refId,
++        'like_count' => jhd_api_like_count($refType, $refId),
++        'liked' => jhd_api_viewer_liked($refType, $refId, $viewer),
++    ]);
++}
++
++if ($method === 'POST') {
++    jhd_api_method(['POST']);
++    $user = jhd_api_user(true);
++    $body = jhd_api_body();
++    $refType = jhd_api_str($body, 'ref_type', 20);
++    $refId = jhd_api_int($body, 'ref_id', 0);
++    $action = jhd_api_str($body, 'action', 10);
++    if (!in_array($refType, JHD_API_LIKE_TYPES, true) || $refId < 1) {
++        jhd_api_error('invalid_request', 'نوع و شناسهٔ محتوا لازم است.', 422);
++    }
++    if (!in_array($action, ['like', 'unlike'], true)) {
++        jhd_api_error('invalid_action', 'عملیات like یا unlike مجاز است.', 422);
++    }
++    if (!jhd_api_content_exists($refType, $refId)) {
++        jhd_api_error('not_found', 'محتوای درخواستی پیدا نشد.', 404);
++    }
++    // محدودیت نرم نرخ عملیات هر کاربر؛ حفاظت در برابر اسپم دکمه.
++    try {
++        $db = getDB();
++        $key = hash('sha256', 'like:' . (int)$user['id']);
++        if (recordLoginAttempt($db, $key) > 120) {
++            jhd_api_error('rate_limited', 'تعداد عملیات بیش از حد مجاز است. کمی بعد دوباره تلاش کنید.', 429);
++        }
++    } catch (Throwable $e) {
++        error_log('Like limiter unavailable: ' . get_class($e));
++    }
++
++    try {
++        $db = getDB();
++        if ($action === 'like') {
++            // Idempotent: درج تکراری با قید یکتایی بی‌اثر است (بدون شمارش دوباره).
++            if (databaseDriver() === 'mysql') {
++                $db->prepare('INSERT IGNORE INTO content_likes (user_id, ref_type, ref_id) VALUES (?, ?, ?)')
++                    ->execute([(int)$user['id'], $refType, $refId]);
++            } elseif (databaseDriver() === 'sqlite') {
++                $db->prepare('INSERT OR IGNORE INTO content_likes (user_id, ref_type, ref_id) VALUES (?, ?, ?)')
++                    ->execute([(int)$user['id'], $refType, $refId]);
++            } else {
++                $db->prepare('INSERT INTO content_likes (user_id, ref_type, ref_id) VALUES (?, ?, ?) ON CONFLICT (user_id, ref_type, ref_id) DO NOTHING')
++                    ->execute([(int)$user['id'], $refType, $refId]);
++            }
++        } else {
++            $db->prepare('DELETE FROM content_likes WHERE user_id = ? AND ref_type = ? AND ref_id = ?')
++                ->execute([(int)$user['id'], $refType, $refId]);
++        }
++    } catch (Throwable $e) {
++        error_log('Like write failed: ' . get_class($e));
++        jhd_api_error('unavailable', 'ثبت لایک در این لحظه ممکن نیست. بعداً دوباره تلاش کنید.', 503);
++    }
++
++    jhd_api_data([
++        'ref_type' => $refType,
++        'ref_id' => $refId,
++        'action' => $action,
++        'like_count' => jhd_api_like_count($refType, $refId),
++        'liked' => $action === 'like',
++    ]);
++}
++
++header('Allow: GET, HEAD, POST, OPTIONS');
++jhd_api_error('method_not_allowed', 'روش درخواست مجاز نیست.', 405);
+diff --git a/config/routes.php b/config/routes.php
+index 3bdc4c7..bf4d1f9 100644
+--- a/config/routes.php
++++ b/config/routes.php
+@@ -20,6 +20,34 @@ return [
+         '/index.php'            => 'index.php',
+         // Read-only JSON feed for the lightweight native Android app.
+         '/api/mobile-feed'      => 'api/mobile-feed.php',
++        // ─── API بومی موبایل (JSON؛ اندروید) ────────────────────────────
++        // خانوادهٔ کامل /api/mobile/* برای اپلیکیشن اندروید. هر مسیر عمداً
++        // allowlist شده است؛ resource/action از مسیر می‌آید نه از ورودی خام.
++        '/api/mobile'                => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'health']],
++        '/api/mobile/health'         => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'health']],
++        '/api/mobile/home'           => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'home']],
++        '/api/mobile/posts'          => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'posts']],
++        '/api/mobile/post'           => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'post']],
++        '/api/mobile/books'          => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'books']],
++        '/api/mobile/book'           => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'book']],
++        '/api/mobile/collections'    => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'collections']],
++        '/api/mobile/lessons'        => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'lessons']],
++        '/api/mobile/lesson'         => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'lesson']],
++        '/api/mobile/topics'         => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'topics']],
++        '/api/mobile/topic'          => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'topic']],
++        '/api/mobile/media'          => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'media']],
++        '/api/mobile/media-item'     => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'media-item']],
++        '/api/mobile/search'         => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'search']],
++        '/api/mobile/categories'     => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'categories']],
++        '/api/mobile/pages'          => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'pages']],
++        '/api/mobile/contact'        => ['file' => 'api/mobile/index.php', 'get' => ['resource' => 'contact']],
++        '/api/mobile/auth/register'  => ['file' => 'api/mobile/auth.php', 'get' => ['action' => 'register']],
++        '/api/mobile/auth/login'     => ['file' => 'api/mobile/auth.php', 'get' => ['action' => 'login']],
++        '/api/mobile/auth/me'        => ['file' => 'api/mobile/auth.php', 'get' => ['action' => 'me']],
++        '/api/mobile/auth/profile'   => ['file' => 'api/mobile/auth.php', 'get' => ['action' => 'profile']],
++        '/api/mobile/auth/change-password' => ['file' => 'api/mobile/auth.php', 'get' => ['action' => 'change-password']],
++        '/api/mobile/auth/logout'    => ['file' => 'api/mobile/auth.php', 'get' => ['action' => 'logout']],
++        '/api/mobile/likes'          => 'api/mobile/likes.php',
+         '/about'                => 'pages/about.php',
+         '/announcements'        => 'pages/announcements.php',
+         '/article'              => 'pages/post.php',
+diff --git a/database/database.mysql.sql b/database/database.mysql.sql
+index 8c28157..682fb5a 100644
+--- a/database/database.mysql.sql
++++ b/database/database.mysql.sql
+@@ -423,3 +423,31 @@ CREATE INDEX books_slug_idx ON books (slug);
+ CREATE INDEX lessons_slug_idx ON lessons (slug);
+ CREATE INDEX post_topics_post_idx ON post_topics (post_id, topic_id);
+ CREATE INDEX stored_files_url_idx ON stored_files (url);
++
++-- Mobile API: access tokens and content likes (additive; nothing is deleted).
++-- Bearer tokens for the Android app: only the sha256 hash is ever stored.
++CREATE TABLE IF NOT EXISTS api_tokens (
++  id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
++  user_id      INT NOT NULL,
++  token_hash   VARCHAR(64) NOT NULL,
++  device_label VARCHAR(120) NOT NULL DEFAULT '',
++  created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++  last_used_at DATETIME NULL,
++  expires_at   DATETIME NOT NULL,
++  revoked_at   DATETIME NULL,
++  PRIMARY KEY (id),
++  UNIQUE KEY api_tokens_hash (token_hash),
++  KEY api_tokens_user (user_id),
++  KEY api_tokens_expiry (expires_at)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
++
++-- Content likes with a uniqueness constraint: one row per (user, content).
++-- Counts always come from COUNT(*) and cannot be forged by clients.
++CREATE TABLE IF NOT EXISTS content_likes (
++  user_id    INT NOT NULL,
++  ref_type   VARCHAR(20) NOT NULL,
++  ref_id     INT NOT NULL,
++  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
++  PRIMARY KEY (user_id, ref_type, ref_id),
++  KEY content_likes_ref (ref_type, ref_id)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+diff --git a/database/database.postgres.sql b/database/database.postgres.sql
+index 048de2b..17444c8 100644
+--- a/database/database.postgres.sql
++++ b/database/database.postgres.sql
+@@ -418,4 +418,32 @@ CREATE INDEX IF NOT EXISTS topics_slug_idx ON topics (slug);
+ CREATE INDEX IF NOT EXISTS books_slug_idx ON books (slug);
+ CREATE INDEX IF NOT EXISTS lessons_slug_idx ON lessons (slug);
+ CREATE INDEX IF NOT EXISTS post_topics_post_idx ON post_topics (post_id, topic_id);
++
++-- ═══════════════════════════════════════════════════════════════════════════
++-- API موبایل: توکن‌های دسترسی و لایک محتوا (additive؛ هیچ داده‌ای حذف نمی‌شود)
++-- ═══════════════════════════════════════════════════════════════════════════
++-- توکن‌های Bearer اپ اندروید. خود توکن هرگز ذخیره نمی‌شود؛ فقط hash آن.
++CREATE TABLE IF NOT EXISTS api_tokens (
++  id           BIGSERIAL PRIMARY KEY,
++  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++  token_hash   VARCHAR(64) NOT NULL UNIQUE,
++  device_label VARCHAR(120) NOT NULL DEFAULT '',
++  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++  last_used_at TIMESTAMPTZ NULL,
++  expires_at   TIMESTAMPTZ NOT NULL,
++  revoked_at   TIMESTAMPTZ NULL
++);
++CREATE INDEX IF NOT EXISTS api_tokens_user ON api_tokens(user_id);
++CREATE INDEX IF NOT EXISTS api_tokens_expiry ON api_tokens(expires_at);
++
++-- لایک محتوا با قید یکتایی: هر کاربر هر محتوا را فقط یک‌بار می‌پسندد؛
++-- شمارنده همیشه از COUNT(*) می‌آید و قابل جعل نیست.
++CREATE TABLE IF NOT EXISTS content_likes (
++  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++  ref_type   VARCHAR(20) NOT NULL,
++  ref_id     INTEGER NOT NULL,
++  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++  PRIMARY KEY (user_id, ref_type, ref_id)
++);
++CREATE INDEX IF NOT EXISTS content_likes_ref ON content_likes(ref_type, ref_id);
+ COMMIT;
+diff --git a/docs/MOBILE-API.md b/docs/MOBILE-API.md
+new file mode 100644
+index 0000000..b5e88ed
+--- /dev/null
++++ b/docs/MOBILE-API.md
+@@ -0,0 +1,82 @@
++# API بومی موبایل — قرارداد `/api/mobile/*`
++
++خانوادهٔ کامل JSON برای اپلیکیشن اندروید جامعه‌الهدی. همهٔ مسیرها در
++`config/routes.php` allowlist شده‌اند و فقط از `api/mobile/` اجرا می‌شوند.
++پاسخ موفق: `{ "ok": true, "data": … }` یا `{ "ok": true, "items": […], "meta": … }`؛
++پاسخ خطا: `{ "ok": false, "error": "<code>", "message": "پیام فارسی" }` با کد HTTP درست.
++
++## محتوای عمومی (GET/HEAD)
++
++| مسیر | پارامترها | توضیح |
++| --- | --- | --- |
++| `/api/mobile/health` | — | سلامت سامانه و اتصال دیتابیس |
++| `/api/mobile/home` | `limit` | خانه: سایت، بنرها، شاخص و بخش‌های تجمیعی |
++| `/api/mobile/posts` | `type` (all/news/article/research/report/announcement/event/program/religious/qa/speech)، `page`، `per_page`، `search`، `category`، `topic` | فهرست مطالب با صفحه‌بندی. `type=event` همان ترکیب صفحهٔ `/events` وب است |
++| `/api/mobile/post` | `id` یا `slug` | جزئیات مطلب: متن/HTML امن، گالری، پیوست‌ها، موضوع‌ها، وضعیت لایک |
++| `/api/mobile/books` | `page`، `per_page`، `search`، `topic` | کتابخانه |
++| `/api/mobile/book` | `id` یا `slug` | جزئیات کتاب + `pdf_url`/`word_url` برای دانلود |
++| `/api/mobile/collections` | — | مجموعه‌های درسی + جلدها |
++| `/api/mobile/lessons` | `collection`، `volume`، `search`، `page`، `per_page` | درس‌ها |
++| `/api/mobile/lesson` | `id` یا `slug` | جزئیات درس + `audio_url`/`video_url`/`pdf_url` + پیوست‌ها |
++| `/api/mobile/topics` | — | موضوع‌ها |
++| `/api/mobile/topic` | `id` یا `slug` | موضوع + زیرموضوع‌ها + محتوای مرتبط |
++| `/api/mobile/media` | `kind` (all/audio/video)، `page`، `per_page` | رسانه‌های منتشرشده |
++| `/api/mobile/media-item` | `kind` (audio/video)، `id` | جزئیات رسانه با `media_url` جریان/دانلود |
++| `/api/mobile/search` | `q`، `type`، `topic`، `sort`، `page`، `per_page` | جست‌وجوی کامل همهٔ انواع (همان `searchAll`) |
++| `/api/mobile/categories` | — | دسته‌بندی‌ها |
++| `/api/mobile/pages` | `page=about\|contact` | درباره ما / تماس |
++| `/api/mobile/contact` | **POST** JSON | ارسال پیام تماس (نرخ‌محدود: ۳ پیام/۳۰ دقیقه/IP) |
++
++## احراز هویت (Bearer)
++
++توکن با `Authorization: Bearer jh1_…` می‌آید. خود توکن ۲۵۶ بیت تصادفی است و
++**فقط hash (sha256) آن در `api_tokens` ذخیره می‌شود**؛ عمر پیش‌فرض ۶۰ روز، قابل
++باطل‌سازی. تغییر رمز ⇒ افزایش `auth_version` و باطل‌شدن همهٔ توکن‌ها (وب و اپ با هم).
++
++| مسیر | متد | بدنه (JSON) | توضیح |
++| --- | --- | --- | --- |
++| `/api/mobile/auth/register` | POST | `full_name, country, phone, email?, password, password_confirm, agreed_terms, device_label?` | ثبت‌نام عضو (همیشه role=user)؛ ۲۰۱ + توکن |
++| `/api/mobile/auth/login` | POST | `identifier` (ایمیل/نام کاربری/تلفن)، `password, device_label?` | ورود؛ محدودیت تلاش مثل وب |
++| `/api/mobile/auth/me` | GET | — | حساب جاری |
++| `/api/mobile/auth/profile` | POST | `full_name?/email?/phone?/avatar?` | به‌روزرسانی پروفایل |
++| `/api/mobile/auth/change-password` | POST | `current_password, new_password, new_password_confirm` | تغییر رمز؛ همهٔ توکن‌ها باطل می‌شوند |
++| `/api/mobile/auth/logout` | POST | — | باطل‌کردن همین توکن (خروج امن) |
++
++هیچ پاسخی hash رمز یا توکن دیگری را برنمی‌گرداند. نقش هرگز از ورودی خوانده نمی‌شود.
++
++## لایک
++
++| مسیر | متد | بدنه | توضیح |
++| --- | --- | --- | --- |
++| `/api/mobile/likes?ref_type=&ref_id=` | GET | — | `like_count` + `liked` (ناشناس: `liked=null`) |
++| `/api/mobile/likes` | POST | `ref_type, ref_id, action=like\|unlike` | نیازمند ورود؛ **idempotent** |
++
++- `ref_type ∈ {post, book, lesson, media}` و محتوا باید منتشرشده باشد (۴۰۴ در غیر این صورت).
++- جدول `content_likes` قید یکتایی `(user_id, ref_type, ref_id)` دارد؛ ثبت تکراری
++  (حتی هم‌زمان) یک ردیف می‌سازد.
++- `like_count` فقط از `COUNT(*)` دیتابیس می‌آید؛ هیچ شمارنده‌ای از کلاینت پذیرفته نمی‌شود.
++
++## ملاحظات امنیتی
++
++- فقط محتوای `published`/فعال به اپ نشان داده می‌شود؛ پیش‌نویس‌ها هرگز نشت نمی‌کنند.
++- `content_html` با همان sanitizer سایت (`safeRichText`) پاک می‌شود؛ `content_text` متن ساده است.
++- عملیات عضو با Bearer است و cookie محیطی ندارد (CSRF ندارد)؛ عملیات ناشناس نرخ‌محدودند.
++- هیچ رمز، کلید، یا دسترسی مدیریتی در این API یا در APK قرار نمی‌گیرد.
++- جداول `api_tokens` و `content_likes` فقط افزودنی هستند؛ `php bin/migrate.php` آن‌ها را
++  idempotent اضافه می‌کند و هیچ داده/فایل موجودی را حذف یا بازنشانی نمی‌کند.
++
++## آزمون
++
++```sh
++# یک دیتابیس SQLite آزمایشی + سرور محلی (یا هر PHP 8.3):
++php bin/dev-db.php
++APP_ENV=development DB_DRIVER=sqlite SQLITE_PATH=/tmp/jhd.sqlite \
++SESSION_DRIVER=files UPLOAD_STORAGE=local SITE_URL=http://127.0.0.1:8080 \
++php -S 127.0.0.1:8080 router.php
++
++# آزمون قرارداد (بدون Playwright):
++TEST_BASE_URL=http://127.0.0.1:8080 node tests/mobile-api.mjs
++```
++
++گردش‌کار **Mobile API tests** در GitHub Actions همین آزمون‌ها را روی دیتابیس
++ایزولهٔ SQLite اجرا می‌کند. فید قبلی `/api/mobile-feed` برای سازگاری دست‌نخورده مانده است.
+diff --git a/docs/NATIVE-ANDROID-FEED.md b/docs/NATIVE-ANDROID-FEED.md
+index ac6545d..262a560 100644
+--- a/docs/NATIVE-ANDROID-FEED.md
++++ b/docs/NATIVE-ANDROID-FEED.md
+@@ -4,6 +4,10 @@
+ 
+ `GET https://jametulhoda.vercel.app/api/mobile-feed`
+ 
++> برای اپلیکیشن کامل اندروید، خانوادهٔ جدید `/api/mobile/*` با احراز هویت، لایک،
++> جست‌وجو و صفحه‌بندی را ببینید: [`docs/MOBILE-API.md`](MOBILE-API.md). این فید
++> سبک برای سازگاری با نسخه‌های قبلی اپ باقی مانده است.
++
+ این API فقط رکوردهای منتشرشدهٔ وب‌سایت را برمی‌گرداند. هیچ اتصال به شبکه‌های اجتماعی، جمع‌آوری پست خارجی، SDK شخص ثالث یا متغیر محیطی اجتماعی در قرارداد این فید وجود ندارد.
+ 
+ ## قرارداد پاسخ
+diff --git a/tests/fixtures/schema.sqlite.sql b/tests/fixtures/schema.sqlite.sql
+index d85e0a2..8ac1212 100644
+--- a/tests/fixtures/schema.sqlite.sql
++++ b/tests/fixtures/schema.sqlite.sql
+@@ -353,3 +353,25 @@ CREATE INDEX IF NOT EXISTS topics_slug_idx ON topics (slug);
+ CREATE INDEX IF NOT EXISTS books_slug_idx ON books (slug);
+ CREATE INDEX IF NOT EXISTS lessons_slug_idx ON lessons (slug);
+ CREATE INDEX IF NOT EXISTS post_topics_post_idx ON post_topics (post_id, topic_id);
++
++-- Mobile API: access tokens and content likes (additive; test-only mirror).
++CREATE TABLE IF NOT EXISTS api_tokens (
++  id           INTEGER PRIMARY KEY AUTOINCREMENT,
++  user_id      INTEGER NOT NULL,
++  token_hash   TEXT NOT NULL UNIQUE,
++  device_label TEXT NOT NULL DEFAULT '',
++  created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
++  last_used_at TEXT NULL,
++  expires_at   TEXT NOT NULL,
++  revoked_at   TEXT NULL
++);
++CREATE INDEX IF NOT EXISTS api_tokens_user ON api_tokens(user_id);
++
++CREATE TABLE IF NOT EXISTS content_likes (
++  user_id    INTEGER NOT NULL,
++  ref_type   TEXT NOT NULL,
++  ref_id     INTEGER NOT NULL,
++  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
++  PRIMARY KEY (user_id, ref_type, ref_id)
++);
++CREATE INDEX IF NOT EXISTS content_likes_ref ON content_likes(ref_type, ref_id);
+diff --git a/tests/mobile-api.mjs b/tests/mobile-api.mjs
+new file mode 100644
+index 0000000..26da6ef
+--- /dev/null
++++ b/tests/mobile-api.mjs
+@@ -0,0 +1,264 @@
++#!/usr/bin/env node
++/**
++ * tests/mobile-api.mjs — آزمون قرارداد API بومی موبایل (/api/mobile/*)
++ *
++ * بدون وابستگی به Playwright اجرا می‌شود؛ فقط یک سرور در حال اجرا لازم است:
++ *
++ *   APP_ENV=development DB_DRIVER=sqlite SQLITE_PATH=/tmp/jhd.sqlite \
++ *   SESSION_DRIVER=files UPLOAD_STORAGE=local php -S 127.0.0.1:8080 router.php
++ *   TEST_BASE_URL=http://127.0.0.1:8080 node tests/mobile-api.mjs
++ *
++ * پوشش: سلامت، خانه، فهرست‌ها و صفحه‌بندی، جزئیات، جست‌وجو، رسانه، دانلودپذیری
++ * URLها، درباره/تماس، ورود/ثبت‌نام/پروفایل/تغییر رمز/خروج، لایک امن (idempotent
++ * و ضد جعل)، خطاهای شبکه/اعتبارسنجی، و پنهان‌ماندن پیش‌نویس‌ها.
++ */
++import { strict as assert } from 'node:assert';
++
++const BASE = (process.env.TEST_BASE_URL || 'http://127.0.0.1:8080').replace(/\/+$/, '');
++const results = [];
++let failures = 0;
++
++function check(label, ok, detail = '') {
++  results.push({ label, ok, detail });
++  if (!ok) failures++;
++  console.log(ok ? 'PASS' : 'FAIL', label, ok ? '' : detail);
++}
++
++async function call(path, { method = 'GET', body, token, headers = {} } = {}) {
++  const init = { method, headers: { Accept: 'application/json', ...headers } };
++  if (body !== undefined) {
++    init.body = JSON.stringify(body);
++    init.headers['Content-Type'] = 'application/json';
++  }
++  if (token) init.headers.Authorization = `Bearer ${token}`;
++  try {
++    const res = await fetch(BASE + path, init);
++    let json = null;
++    const text = await res.text();
++    try { json = JSON.parse(text); } catch { /* non-JSON body */ }
++    return { status: res.status, json, text, headers: res.headers };
++  } catch (e) {
++    return { status: 0, json: null, text: String(e), headers: new Headers() };
++  }
++}
++
++const email = `mobile-api-${Date.now()}@example.test`;
++const phone = `07${String(Date.now()).slice(-8)}`;
++let token = '';
++let secondToken = '';
++
++// ─── سلامت و ساختار پاسخ ────────────────────────────────────────────────────
++{
++  const r = await call('/api/mobile/health');
++  check('health endpoint responds', r.status === 200 && r.json?.ok === true && r.json?.data?.database === true, `status=${r.status}`);
++  const bad = await call('/api/mobile/health', { method: 'DELETE' });
++  check('health rejects unknown methods', bad.status === 405, String(bad.status));
++}
++
++// ─── خانه ───────────────────────────────────────────────────────────────────
++{
++  const r = await call('/api/mobile/home?limit=3');
++  const data = r.json?.data ?? {};
++  check('home returns site + sections', r.status === 200 && r.json?.ok && typeof data.site?.name === 'string' && /^https?:\/\//.test(data.site.logo_url ?? ''), `status=${r.status}`);
++  check('home sections cover the site areas', ['news', 'announcements', 'events', 'articles', 'research', 'books', 'lessons', 'topics', 'media'].every((k) => Array.isArray(data.sections?.[k])), JSON.stringify(Object.keys(data.sections ?? {})));
++  check('home items carry like state fields', (data.sections?.news ?? []).every((i) => typeof i.like_count === 'number' && i.liked === null), '');
++}
++
++// ─── فهرست‌ها و صفحه‌بندی ───────────────────────────────────────────────────
++{
++  const r = await call('/api/mobile/posts?type=news&page=1&per_page=5');
++  const meta = r.json?.meta ?? {};
++  check('posts listing paginates', r.status === 200 && Array.isArray(r.json?.items) && meta.page === 1 && meta.per_page === 5 && typeof meta.total === 'number', JSON.stringify(meta));
++  const p2 = await call('/api/mobile/posts?type=news&page=2&per_page=5');
++  check('posts page 2 keeps filters', p2.status === 200 && p2.json?.meta?.page === 2, String(p2.status));
++  const events = await call('/api/mobile/posts?type=event&per_page=50');
++  check('event listing matches site scope (program/religious/announcement)', events.status === 200 && (events.json?.items ?? []).every((i) => ['program', 'religious', 'announcement'].includes(i.type)), JSON.stringify((events.json?.items ?? []).map((i) => i.type)));
++  const bad = await call('/api/mobile/posts?type=;drop');
++  check('invalid content type is rejected', bad.status === 422, String(bad.status));
++}
++
++// ─── جزئیات و محتوای منتشرنشده ─────────────────────────────────────────────
++{
++  const list = await call('/api/mobile/posts?type=news&per_page=5');
++  const first = (list.json?.items ?? [])[0];
++  check('listing items expose stable keys', !!first && /^post-\d+$/.test(first.key ?? ''), JSON.stringify(first?.key));
++  const detail = await call(`/api/mobile/post?slug=${encodeURIComponent(first?.slug ?? '')}`);
++  const d = detail.json?.data ?? {};
++  check('post detail has content_text and sanitized html', detail.status === 200 && typeof d.content_text === 'string' && d.content_text.length > 0 && typeof d.content_html === 'string' && !/<script/i.test(d.content_html), `status=${detail.status}`);
++  check('post detail has topics/gallery/attachments arrays', Array.isArray(d.topics) && Array.isArray(d.gallery) && Array.isArray(d.attachments), '');
++  check('post detail carries viewer like state', d.liked === null && typeof d.like_count === 'number', '');
++  const missing = await call('/api/mobile/post?slug=does-not-exist-xyz');
++  check('missing post returns 404', missing.status === 404, String(missing.status));
++  const draft = await call('/api/mobile/post?slug=draft-book');
++  check('draft content never leaks', draft.status === 404, String(draft.status));
++}
++
++// ─── کتاب‌ها ────────────────────────────────────────────────────────────────
++{
++  const r = await call('/api/mobile/books?per_page=5');
++  const first = (r.json?.items ?? [])[0];
++  check('books listing works', r.status === 200 && !!first, `status=${r.status}`);
++  const d = await call(`/api/mobile/book?id=${first?.id ?? 0}`);
++  const book = d.json?.data ?? {};
++  check('book detail exposes pdf/word download urls', d.status === 200 && ('pdf_url' in book) && ('word_url' in book), JSON.stringify(Object.keys(book).slice(0, 12)));
++}
++
++// ─── درس‌ها و مجموعه‌ها ─────────────────────────────────────────────────────
++{
++  const c = await call('/api/mobile/collections');
++  check('lesson collections list', c.status === 200 && Array.isArray(c.json?.items), String(c.status));
++  const l = await call('/api/mobile/lessons?per_page=5');
++  check('lessons listing works', l.status === 200 && Array.isArray(l.json?.items) && typeof l.json?.meta?.total === 'number', String(l.status));
++  const first = (l.json?.items ?? [])[0];
++  const d = await call(`/api/mobile/lesson?slug=${encodeURIComponent(first?.slug ?? '')}`);
++  const lesson = d.json?.data ?? {};
++  check('lesson detail has media urls and attachments', d.status === 200 && ('audio_url' in lesson) && ('video_url' in lesson) && Array.isArray(lesson.attachments), `status=${d.status}`);
++}
++
++// ─── موضوع‌ها ───────────────────────────────────────────────────────────────
++{
++  const t = await call('/api/mobile/topics');
++  check('topics tree endpoint', t.status === 200 && (t.json?.items ?? []).length > 0, String(t.status));
++  const slug = (t.json?.items ?? [])[0]?.slug ?? '';
++  const d = await call(`/api/mobile/topic?slug=${encodeURIComponent(slug)}`);
++  check('topic detail lists its content', d.status === 200 && Array.isArray(d.json?.data?.posts) && Array.isArray(d.json?.data?.lessons) && Array.isArray(d.json?.data?.books), `status=${d.status}`);
++}
++
++// ─── رسانه ─────────────────────────────────────────────────────────────────
++{
++  const m = await call('/api/mobile/media?kind=audio&per_page=5');
++  const items = m.json?.items ?? [];
++  check('audio listing works', m.status === 200 && Array.isArray(items), String(m.status));
++  if (items.length > 0) {
++    const item = items[0];
++    check('media items expose absolute stream urls', typeof item.media_url === 'string' && /^https?:\/\//.test(item.media_url), JSON.stringify(item.media_url));
++    const d = await call(`/api/mobile/media-item?kind=${encodeURIComponent(item.type)}&id=${item.id}`);
++    check('media detail resolves published parent', d.status === 200 && d.json?.data?.parent?.title !== '', `status=${d.status}`);
++    // URL فایل رسانه باید قابل واکشی باشد (دانلود/پخش در اپ).
++    const head = await fetch(item.media_url, { method: 'GET', headers: { Range: 'bytes=0-64' } }).catch(() => null);
++    check('media file url is reachable (download)', !!head && (head.status === 200 || head.status === 206), `status=${head?.status ?? 'net'}`);
++  }
++  const v = await call('/api/mobile/media?kind=video&per_page=5');
++  check('video listing works', v.status === 200 && Array.isArray(v.json?.items), String(v.status));
++  const bad = await call('/api/mobile/media-item?kind=document&id=1');
++  check('media detail rejects unknown kinds', bad.status === 422, String(bad.status));
++}
++
++// ─── جست‌وجو ────────────────────────────────────────────────────────────────
++{
++  const s = await call('/api/mobile/search?q=' + encodeURIComponent('مهدویت') + '&type=article');
++  check('search finds published article', s.status === 200 && (s.json?.meta?.total ?? 0) >= 1 && (s.json?.items ?? []).some((i) => i.title.includes('مهدویت')), JSON.stringify(s.json?.meta));
++  const injection = await call('/api/mobile/search?q=' + encodeURIComponent("') OR 1=1 --"));
++  check('search treats SQL-looking input as data', injection.status === 200 && !/SQLSTATE|Warning|Fatal/i.test(injection.text ?? ''), '');
++  const empty = await call('/api/mobile/search?q=');
++  check('empty search returns empty discovery state', empty.status === 200 && (empty.json?.items ?? []).length === 0, '');
++  const page2 = await call('/api/mobile/search?q=' + encodeURIComponent('درس') + '&page=2&per_page=5');
++  check('search paginates', page2.status === 200 && (page2.json?.meta?.page === 2), JSON.stringify(page2.json?.meta));
++}
++
++// ─── دسته‌ها و صفحه‌ها و تماس ───────────────────────────────────────────────
++{
++  const c = await call('/api/mobile/categories');
++  check('categories endpoint', c.status === 200 && Array.isArray(c.json?.items), String(c.status));
++  const a = await call('/api/mobile/pages?page=about');
++  check('about page payload', a.status === 200 && a.json?.data?.founder && /^https?:\/\//.test(a.json?.data?.logo_url ?? ''), String(a.status));
++  const p = await call('/api/mobile/pages?page=contact');
++  check('contact page payload', p.status === 200 && (p.json?.data?.form?.fields ?? []).includes('message'), String(p.status));
++  const missing = await call('/api/mobile/pages?page=other');
++  check('unknown page returns 404', missing.status === 404, String(missing.status));
++  const invalid = await call('/api/mobile/contact', { method: 'POST', body: { name: 'x', subject: '', message: 'کوتاه' } });
++  check('contact validates input', invalid.status === 422, String(invalid.status));
++  const sent = await call('/api/mobile/contact', { method: 'POST', body: { name: 'کاربر آزمون', subject: 'موضوع آزمون', message: 'این پیام آزمایشی است و متن کافی دارد.', email: 'a@b.co' } });
++  // سقف ۳ پیام در ۳۰ دقیقه از هر IP؛ در اجرای متوالی محلی ممکن است سقف پر شود.
++  check('contact accepts a valid message', (sent.status === 200 && sent.json?.data?.sent === true) || (sent.status === 429 && sent.json?.error === 'rate_limited'), `status=${sent.status} ${sent.text?.slice(0, 120)}`);
++}
++
++// ─── ثبت‌نام و ورود ────────────────────────────────────────────────────────
++{
++  const weak = await call('/api/mobile/auth/register', { method: 'POST', body: { full_name: 'کاربر', country: 'AF', phone, email, password: '123', agreed_terms: true } });
++  check('register enforces password length', weak.status === 422, String(weak.status));
++  const noTerms = await call('/api/mobile/auth/register', { method: 'POST', body: { full_name: 'کاربر آزمون', country: 'AF', phone, email, password: 'TestPass123!', password_confirm: 'TestPass123!', agreed_terms: false } });
++  check('register requires accepting the terms', noTerms.status === 422, String(noTerms.status));
++  const badCountry = await call('/api/mobile/auth/register', { method: 'POST', body: { full_name: 'کاربر آزمون', country: 'XX', phone, email, password: 'TestPass123!', password_confirm: 'TestPass123!', agreed_terms: true } });
++  check('register validates country', badCountry.status === 422, String(badCountry.status));
++
++  const reg = await call('/api/mobile/auth/register', { method: 'POST', body: { full_name: 'کاربر آزمون', country: 'AF', phone, email, password: 'TestPass123!', password_confirm: 'TestPass123!', agreed_terms: true, device_label: 'api-test' } });
++  token = reg.json?.data?.token ?? '';
++  check('register issues a bearer token', reg.status === 201 && token.startsWith('jh1_') && reg.json?.data?.user?.role === 'user', `status=${reg.status}`);
++  check('register response never leaks hashes', !JSON.stringify(reg.json).includes('$2y$') && !('password' in (reg.json?.data?.user ?? {})), '');
++
++  const dup = await call('/api/mobile/auth/register', { method: 'POST', body: { full_name: 'کاربر آزمون', country: 'AF', phone, email, password: 'TestPass123!', password_confirm: 'TestPass123!', agreed_terms: true } });
++  check('duplicate registration is refused', dup.status >= 400, String(dup.status));
++
++  const wrong = await call('/api/mobile/auth/login', { method: 'POST', body: { identifier: email, password: 'WrongPass123!' } });
++  check('wrong password is rejected with generic error', wrong.status === 401 && wrong.json?.error === 'invalid_credentials', String(wrong.status));
++  const login = await call('/api/mobile/auth/login', { method: 'POST', body: { identifier: email, password: 'TestPass123!' } });
++  secondToken = login.json?.data?.token ?? '';
++  check('login issues a working token', login.status === 200 && secondToken.startsWith('jh1_'), `status=${login.status}`);
++
++  const me = await call('/api/mobile/auth/me', { token });
++  check('me returns the signed-in account', me.status === 200 && me.json?.data?.user?.full_name === 'کاربر آزمون', `status=${me.status}`);
++  const anon = await call('/api/mobile/auth/me');
++  check('me without token is 401', anon.status === 401, String(anon.status));
++}
++
++// ─── پروفایل و تغییر رمز و خروج ────────────────────────────────────────────
++{
++  const upd = await call('/api/mobile/auth/profile', { method: 'POST', body: { full_name: 'نام به‌روزشده' }, token });
++  check('profile update works', upd.status === 200 && upd.json?.data?.user?.full_name === 'نام به‌روزشده', `status=${upd.status}`);
++  const badMail = await call('/api/mobile/auth/profile', { method: 'POST', body: { email: 'not-an-email' }, token });
++  check('profile validates email', badMail.status === 422, String(badMail.status));
++
++  const chg = await call('/api/mobile/auth/change-password', { method: 'POST', body: { current_password: 'TestPass123!', new_password: 'NewPass456!', new_password_confirm: 'NewPass456!' }, token });
++  check('change password succeeds', chg.status === 200 && chg.json?.data?.changed === true, `status=${chg.status}`);
++  const stale = await call('/api/mobile/auth/me', { token });
++  check('password change revokes old tokens', stale.status === 401, String(stale.status));
++  const staleSecond = await call('/api/mobile/auth/me', { token: secondToken });
++  check('password change revokes ALL sessions', staleSecond.status === 401, String(staleSecond.status));
++  const relogin = await call('/api/mobile/auth/login', { method: 'POST', body: { identifier: email, password: 'NewPass456!' } });
++  token = relogin.json?.data?.token ?? '';
++  check('login with the new password works', relogin.status === 200 && token !== '', `status=${relogin.status}`);
++}
++
++// ─── لایک: امن، idempotent، ضد جعل ─────────────────────────────────────────
++{
++  const anon = await call('/api/mobile/likes?ref_type=post&ref_id=1');
++  check('anon sees the like count (liked=null)', anon.status === 200 && anon.json?.data?.liked === null && typeof anon.json?.data?.like_count === 'number', `status=${anon.status}`);
++  const unauth = await call('/api/mobile/likes', { method: 'POST', body: { ref_type: 'post', ref_id: 1, action: 'like' } });
++  check('unauthenticated like is rejected', unauth.status === 401, String(unauth.status));
++  const invalid = await call('/api/mobile/likes', { method: 'POST', body: { ref_type: 'post', ref_id: 999999, action: 'like' }, token });
++  check('liking missing content is 404', invalid.status === 404, String(invalid.status));
++  const badType = await call('/api/mobile/likes', { method: 'POST', body: { ref_type: 'users', ref_id: 1, action: 'like' }, token });
++  check('like validates ref_type', badType.status === 422, String(badType.status));
++
++  const l1 = await call('/api/mobile/likes', { method: 'POST', body: { ref_type: 'post', ref_id: 1, action: 'like', like_count: 99999 }, token });
++  const l2 = await call('/api/mobile/likes', { method: 'POST', body: { ref_type: 'post', ref_id: 1, action: 'like', like_count: 99999 }, token });
++  check('double like keeps a single count (idempotent)', l1.status === 200 && l2.status === 200 && l2.json?.data?.like_count === l1.json?.data?.like_count && l1.json?.data?.liked === true, JSON.stringify([l1.json?.data, l2.json?.data]));
++  check('forged like_count from the client is ignored', l2.json?.data?.like_count !== 99999 && typeof l2.json?.data?.like_count === 'number', '');
++  const state = await call('/api/mobile/post?id=1', { token });
++  check('post detail reflects the like state', state.json?.data?.liked === true && state.json?.data?.like_count === l2.json?.data?.like_count, JSON.stringify({ liked: state.json?.data?.liked, count: state.json?.data?.like_count, expected: l2.json?.data?.like_count }));
++  const u1 = await call('/api/mobile/likes', { method: 'POST', body: { ref_type: 'post', ref_id: 1, action: 'unlike' }, token });
++  const u2 = await call('/api/mobile/likes', { method: 'POST', body: { ref_type: 'post', ref_id: 1, action: 'unlike' }, token });
++  check('unlike is idempotent too', u1.status === 200 && u2.status === 200 && u2.json?.data?.liked === false, JSON.stringify(u2.json?.data));
++  const restored = await call('/api/mobile/likes', { method: 'POST', body: { ref_type: 'post', ref_id: 1, action: 'like' }, token });
++  check('like can be toggled back on', restored.json?.data?.liked === true, '');
++}
++
++// ─── خروج امن ──────────────────────────────────────────────────────────────
++{
++  const out = await call('/api/mobile/auth/logout', { method: 'POST', token });
++  check('logout succeeds', out.status === 200 && out.json?.data?.logged_out === true, `status=${out.status}`);
++  const after = await call('/api/mobile/auth/me', { token });
++  check('token is dead after logout', after.status === 401, String(after.status));
++}
++
++// ─── روش‌های غیرمجاز ────────────────────────────────────────────────────────
++{
++  const post = await call('/api/mobile/home', { method: 'POST', body: {} });
++  check('public GET endpoints reject POST', post.status === 405, String(post.status));
++  const loginGet = await call('/api/mobile/auth/login');
++  check('auth login rejects GET', loginGet.status === 405, String(loginGet.status));
++}
++
++console.log(`\n${results.length - failures}/${results.length} checks passed`);
++if (failures > 0) process.exit(1);
+-- 
+2.39.5
+
