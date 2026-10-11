@@ -24,7 +24,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -261,7 +260,7 @@ private fun NativeHeader(
                 )
             }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.primary)
-            HorizontalDivider(color = Color(0xFFE5EBE7))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }
 }
@@ -375,9 +374,13 @@ private fun SectionHeading(title: String, count: Int, onViewAll: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        Box(
+            Modifier.width(3.dp).height(34.dp).clip(RoundedCornerShape(3.dp))
+                .background(MaterialTheme.colorScheme.secondary)
+        )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, color = Color(0xFF203A30), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("$count مطلب تازه", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+            Text(title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("$count مطلب", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
         }
         TextButton(onClick = onViewAll, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)) {
             Text("مشاهدهٔ همه", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
@@ -444,7 +447,7 @@ private fun NewsCard(item: FeedItem, onOpen: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column {
             if (item.image.isNotBlank()) {
@@ -463,9 +466,9 @@ private fun NewsCard(item: FeedItem, onOpen: () -> Unit) {
                     Spacer(Modifier.weight(1f))
                     if (item.date.isNotBlank()) Text(readableDate(item.date), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
                 }
-                Text(item.title, color = Color(0xFF203A30), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 if (item.summary.isNotBlank()) {
-                    Text(item.summary, color = Color(0xFF4E5E55), style = MaterialTheme.typography.bodyMedium, lineHeight = 23.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, lineHeight = 23.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
                 CardActionLine(label = if (item.type == "event") "جزئیات رویداد" else if (item.type == "announcement") "مشاهدهٔ اطلاعیه" else "ادامهٔ خبر", icon = Icons.Default.ArrowForward)
             }
@@ -479,7 +482,7 @@ private fun ReadingCard(item: FeedItem, onOpen: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
@@ -490,15 +493,15 @@ private fun ReadingCard(item: FeedItem, onOpen: () -> Unit) {
                 )
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        ContentBadge(typeLabel(item.type), Color(0xFFEAF0FF), Color(0xFF244A8F))
+                        ContentBadge(typeLabel(item.type), MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.weight(1f))
-                        Icon(Icons.Default.BookmarkBorder, contentDescription = null, tint = Color(0xFF244A8F), modifier = Modifier.size(19.dp))
+                        Icon(Icons.Default.BookmarkBorder, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
                     }
-                    Text(item.title, color = Color(0xFF213653), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     if (item.summary.isNotBlank()) Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
             }
-            HorizontalDivider(color = Color(0xFFE9EDF5))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 if (item.author.isNotBlank()) {
                     Icon(Icons.Default.PersonOutline, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
@@ -519,7 +522,7 @@ private fun BookCard(item: FeedItem, onOpen: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             Modifier.fillMaxWidth().padding(13.dp),
@@ -528,15 +531,15 @@ private fun BookCard(item: FeedItem, onOpen: () -> Unit) {
         ) {
             FeedImage(item.image, item.title, Modifier.width(104.dp).height(145.dp), Icons.Default.MenuBook)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ContentBadge("کتابخانه", Color(0xFFF8F0DC), Color(0xFF7A5A20))
-                Text(item.title, color = Color(0xFF3A3021), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                ContentBadge("کتابخانه", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+                Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
                 if (item.author.isNotBlank()) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Icon(Icons.Default.PersonOutline, contentDescription = null, tint = Color(0xFF8A754D), modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.PersonOutline, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(16.dp))
                         Text(item.author, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                if (item.summary.isNotBlank()) Text(item.summary, color = Color(0xFF655B4B), style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (item.summary.isNotBlank()) Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 CardActionLine(label = "مشخصات کتاب", icon = Icons.Default.ArrowForward)
             }
         }
@@ -550,7 +553,7 @@ private fun LessonCard(item: FeedItem, onOpen: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(Modifier.fillMaxWidth()) {
             Box(Modifier.width(5.dp).fillMaxHeight().defaultMinSize(minHeight = 138.dp).background(MaterialTheme.colorScheme.primary))
@@ -567,8 +570,8 @@ private fun LessonCard(item: FeedItem, onOpen: () -> Unit) {
                     }
                     if (item.date.isNotBlank()) Text(readableDate(item.date), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, maxLines = 1)
                 }
-                Text(item.title, color = Color(0xFF203A30), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                if (item.summary.isNotBlank()) Text(item.summary, color = Color(0xFF4E5E55), style = MaterialTheme.typography.bodySmall, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (item.summary.isNotBlank()) Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 if (item.author.isNotBlank()) Text("مدرس: " + item.author, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 CardActionLine(label = if (isCourse) "ورود به مجموعه" else "مشاهدهٔ درس", icon = Icons.Default.ArrowForward)
             }
@@ -582,19 +585,19 @@ private fun TopicCard(item: FeedItem, onOpen: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(Modifier.fillMaxWidth().padding(15.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
-            Box(Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFF0E9FA)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.tertiaryContainer), contentAlignment = Alignment.Center) {
                 if (item.image.isNotBlank()) {
                     FeedImage(item.image, item.title, Modifier.fillMaxSize(), Icons.Default.LibraryBooks)
                 } else {
-                    Icon(Icons.Default.LibraryBooks, contentDescription = null, tint = Color(0xFF6F4C91), modifier = Modifier.size(29.dp))
+                    Icon(Icons.Default.LibraryBooks, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.size(29.dp))
                 }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ContentBadge("موضوع علمی", Color(0xFFF0E9FA), Color(0xFF6F4C91))
-                Text(item.title, color = Color(0xFF39294A), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                ContentBadge("موضوع علمی", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+                Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (item.summary.isNotBlank()) Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 CardActionLine(label = "معرفی موضوع", icon = Icons.Default.ArrowForward)
             }
@@ -609,17 +612,17 @@ private fun MediaCard(item: FeedItem, onOpen: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(112.dp).height(94.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFFE7EFFA)), contentAlignment = Alignment.Center) {
+                Box(Modifier.width(112.dp).height(94.dp).clip(RoundedCornerShape(13.dp)).background(MaterialTheme.colorScheme.tertiaryContainer), contentAlignment = Alignment.Center) {
                     if (item.image.isNotBlank()) FeedImage(item.image, item.title, Modifier.fillMaxSize(), if (isVideo) Icons.Default.Videocam else Icons.Default.Headphones)
-                    else Icon(if (isVideo) Icons.Default.Videocam else Icons.Default.Headphones, contentDescription = null, tint = Color(0xFF315C8C), modifier = Modifier.size(34.dp))
+                    else Icon(if (isVideo) Icons.Default.Videocam else Icons.Default.Headphones, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.size(34.dp))
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    ContentBadge(if (isVideo) "ویدیوی آموزشی" else "فایل صوتی", Color(0xFFE7EFFA), Color(0xFF315C8C))
-                    Text(item.title, color = Color(0xFF253B52), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    ContentBadge(if (isVideo) "ویدیوی آموزشی" else "فایل صوتی", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+                    Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     if (item.author.isNotBlank()) Text(item.author, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -629,7 +632,7 @@ private fun MediaCard(item: FeedItem, onOpen: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
             }
-            HorizontalDivider(color = Color(0xFFE8EDF3))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             CardActionLine(label = "جزئیات و پیوند رسانه", icon = Icons.Default.OpenInNew)
         }
     }
@@ -641,7 +644,7 @@ private fun GeneralContentCard(item: FeedItem, onOpen: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -649,7 +652,7 @@ private fun GeneralContentCard(item: FeedItem, onOpen: () -> Unit) {
                 Spacer(Modifier.weight(1f))
                 if (item.date.isNotBlank()) Text(readableDate(item.date), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
             }
-            Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF203A30), maxLines = 3, overflow = TextOverflow.Ellipsis)
+            Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, maxLines = 3, overflow = TextOverflow.Ellipsis)
             if (item.summary.isNotBlank()) Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, lineHeight = 22.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
             CardActionLine(label = "جزئیات مطلب", icon = Icons.Default.ArrowForward)
         }
