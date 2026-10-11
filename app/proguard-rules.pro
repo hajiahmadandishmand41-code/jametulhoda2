@@ -1,21 +1,15 @@
 # Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# R8 (full mode) with the default optimized Android rules keeps Compose, OkHttp,
+# Media3 and Coil working; only app-owned reflection would need keep rules.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# OkHttp and Okio ship their own consumer rules.
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Media3/ExoPlayer keeps player internals through its own consumer rules; the
+# app only touches Builder/PlayerView APIs.
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Keep line numbers for readable crash reports without leaking file names.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile

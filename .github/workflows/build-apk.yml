@@ -4,13 +4,15 @@ on:
   push:
     branches:
       - main
+      - 'arena/**'
+      - 'feature/**'
   pull_request:
     branches:
       - main
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -18,9 +20,9 @@ concurrency:
 
 jobs:
   build:
-    name: Test and build lightweight APKs
+    name: Test and build full + lite APKs
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Check out source
@@ -67,39 +69,52 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Run unit tests and assemble APK
-        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug :app:assembleLite
+      - name: Run unit tests (full + lite)
+        run: gradle --no-daemon --stacktrace :app:testFullReleaseUnitTest :app:testLiteReleaseUnitTest
 
-      - name: Verify generated APK
+      - name: Build full and lite release APKs
+        run: gradle --no-daemon --stacktrace :app:assembleFullRelease :app:assembleLiteRelease
+
+      - name: Collect and verify APKs
         shell: bash
         run: |
           set -euo pipefail
-          apk="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$apk"
-          echo "Debug APK size: $(stat -c%s "$apk") bytes"
-          sha256sum "$apk"
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | sed -n '1,5p'
-          lite="app/build/outputs/apk/lite/app-lite.apk"
-          test -s "$lite"
-          echo "Minified lite benchmark size: $(stat -c%s "$lite") bytes"
-          sha256sum "$lite"
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$lite" | sed -n '1,5p'
+          mkdir -p release
+          cp app/build/outputs/apk/full/release/*.apk release/jametulhoda-full.apk
+          cp app/build/outputs/apk/lite/release/*.apk release/jametulhoda-lite.apk
+          echo "== APK sizes =="
+          stat -c '%n %s bytes' release/*.apk
+          sha256sum release/*.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/jametulhoda-full.apk | sed -n '1,5p'
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/jametulhoda-lite.apk | sed -n '1,5p'
 
-      - name: Upload debug APK
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: jametulhoda-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: jametulhoda-apks
+          path: |
+            release/jametulhoda-full.apk
+            release/jametulhoda-lite.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
-      - name: Upload minified lite benchmark APK
-        uses: actions/upload-artifact@v7
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
         with:
-          name: jametulhoda-lite-benchmark-apk
-          path: app/build/outputs/apk/lite/app-lite.apk
-          if-no-files-found: error
-          retention-days: 7
+          tag_name: apk-latest
+          name: jametulhoda Android APKs
+          body: |
+            APKهای رسمی جامعه‌الهدی (Full + Lite) — هر دو با امکانات کامل شامل ورود/ثبت‌نام و پسندیدن.
+
+            - `jametulhoda-full.apk`: نسخهٔ کامل
+            - `jametulhoda-lite.apk`: نسخهٔ سبک (کش و حافظهٔ کمتر، همان قابلیت‌ها)
+          files: |
+            release/jametulhoda-full.apk
+            release/jametulhoda-lite.apk
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload diagnostics when build fails
         if: failure()
