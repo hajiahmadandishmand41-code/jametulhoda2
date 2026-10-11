@@ -52,11 +52,6 @@ import javax.net.ssl.HttpsURLConnection
 private const val FEED_API = "https://jametulhoda.vercel.app/api/mobile-feed"
 private const val PREFS = "jhd_native_feed"
 private const val CACHED_JSON = "feed"
-private val JhdGreen = Color(0xFF145C4B)
-private val JhdPale = Color(0xFFE6F3ED)
-private val JhdBg = Color(0xFFF3F7F4)
-private val JhdMuted = Color(0xFF68776F)
-
 private data class FeedItem(
     val id: String, val source: String, val type: String, val title: String,
     val summary: String, val content: String, val author: String,
@@ -69,7 +64,8 @@ private data class HomeSection(
     val title: String,
     val destination: FeedTab,
     val items: List<FeedItem>,
-    val totalCount: Int
+    val totalCount: Int,
+    val moreFilter: String = "all"
 )
 
 private object FeedRepository {
@@ -118,7 +114,7 @@ private object FeedRepository {
 }
 
 @Composable
-fun NativeFeedScreen() {
+fun NativeFeedScreen(darkTheme: Boolean, onThemeChange: (Boolean) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cache = remember { FeedRepository.cached(context) }
@@ -129,6 +125,8 @@ fun NativeFeedScreen() {
     var searchShown by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var accountShown by remember { mutableStateOf(false) }
+    var moreFilter by remember { mutableStateOf("all") }
 
     fun refresh() {
         if (loading) return
@@ -166,7 +164,7 @@ fun NativeFeedScreen() {
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         Scaffold(
-            containerColor = JhdBg,
+            containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 NativeHeader(
                     detail = selected != null, searchShown = searchShown, search = search, loading = loading,
@@ -183,7 +181,14 @@ fun NativeFeedScreen() {
                     }
                 )
             },
-            bottomBar = { if (selected == null) NativeNavigation(tab) { tab = it; search = ""; if (it != FeedTab.MORE) selected = null } }
+            bottomBar = {
+                if (selected == null) NativeNavigation(tab) { destination ->
+                    tab = destination
+                    search = ""
+                    if (destination == FeedTab.MORE) moreFilter = "all"
+                    else selected = null
+                }
+            }
         ) { padding ->
             when {
                 selected != null -> DetailPage(
@@ -200,8 +205,12 @@ fun NativeFeedScreen() {
                 )
                 tab == FeedTab.MORE -> MorePage(
                     modifier = Modifier.padding(padding),
+                    initialFilter = moreFilter,
                     items = feed.filter { it.type in setOf("course", "lesson", "topic", "audio", "video") },
                     loading = loading,
+                    darkTheme = darkTheme,
+                    onThemeChange = onThemeChange,
+                    onAccount = { accountShown = true },
                     onSite = { openExternal(context, "https://jametulhoda.vercel.app/") },
                     onRefresh = { refresh() },
                     onOpen = { selected = it }
@@ -210,9 +219,17 @@ fun NativeFeedScreen() {
                     modifier = Modifier.padding(padding), items = visible, tab = tab,
                     hasCached = feed.isNotEmpty(), loading = loading, error = error,
                     query = search, onRetry = { refresh() }, onOpen = { selected = it },
-                    onSelectTab = { destination -> tab = destination; search = ""; searchShown = false },
+                    onSelectTab = { destination, filter ->
+                        tab = destination
+                        search = ""
+                        searchShown = false
+                        if (destination == FeedTab.MORE) moreFilter = filter
+                    },
                 )
             }
+        }
+        if (accountShown) {
+            MobileAccountDialog(onDismiss = { accountShown = false })
         }
     }
 }
@@ -223,7 +240,7 @@ private fun NativeHeader(
     onBack: () -> Unit, onSearchToggle: () -> Unit, onSearchChange: (String) -> Unit,
     onRefresh: () -> Unit, onShare: () -> Unit
 ) {
-    Surface(color = Color.White, shadowElevation = 2.dp) {
+    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 0.dp) {
         Column {
             Row(
                 Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
@@ -237,16 +254,16 @@ private fun NativeHeader(
                     contentScale = ContentScale.Fit
                 )
                 Column(Modifier.weight(1f)) {
-                    Text(if (detail) "جزئیات مطلب" else "جامعه‌الهدی", color = JhdGreen, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    if (!detail) Text("مرکز علمی، آموزشی و پژوهشی", color = JhdMuted, style = MaterialTheme.typography.labelSmall)
+                    Text(if (detail) "جزئیات مطلب" else "جامعه‌الهدی", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    if (!detail) Text("مرکز علمی، آموزشی و پژوهشی", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                 }
                 if (detail) {
-                    IconButton(onClick = onShare) { Icon(Icons.Default.Share, contentDescription = "اشتراک‌گذاری", tint = JhdGreen) }
+                    IconButton(onClick = onShare) { Icon(Icons.Default.Share, contentDescription = "اشتراک‌گذاری", tint = MaterialTheme.colorScheme.primary) }
                 } else {
-                    IconButton(onClick = onSearchToggle) { Icon(Icons.Default.Search, contentDescription = "جستجو", tint = JhdGreen) }
+                    IconButton(onClick = onSearchToggle) { Icon(Icons.Default.Search, contentDescription = "جستجو", tint = MaterialTheme.colorScheme.primary) }
                     IconButton(onClick = onRefresh, enabled = !loading) {
                         if (loading) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.Refresh, contentDescription = "تازه‌سازی", tint = JhdGreen)
+                        else Icon(Icons.Default.Refresh, contentDescription = "تازه‌سازی", tint = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
@@ -258,16 +275,16 @@ private fun NativeHeader(
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
                 )
             }
-            if (loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = JhdGreen)
-            HorizontalDivider(color = Color(0xFFE5EBE7))
+            if (loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.primary)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }
 }
 
 @Composable
 private fun NativeNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
-    Surface(color = Color.White, shadowElevation = 8.dp) {
-        NavigationBar(containerColor = Color.White, tonalElevation = 0.dp) {
+    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 0.dp) {
+        NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
             FeedTab.values().forEach { tab ->
                 val icon = when (tab) {
                     FeedTab.HOME -> Icons.Default.Home
@@ -290,14 +307,15 @@ private fun NativeNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
 private fun MainFeed(
     modifier: Modifier, items: List<FeedItem>, tab: FeedTab, hasCached: Boolean,
     loading: Boolean, error: String?, query: String,
-    onRetry: () -> Unit, onOpen: (FeedItem) -> Unit, onSelectTab: (FeedTab) -> Unit
+    onRetry: () -> Unit, onOpen: (FeedItem) -> Unit, onSelectTab: (FeedTab, String) -> Unit
 ) {
     val homeSections = remember(items) {
         fun section(
             key: String,
             title: String,
             destination: FeedTab,
-            matching: List<FeedItem>
+            matching: List<FeedItem>,
+            moreFilter: String = "all"
         ): HomeSection? {
             if (matching.isEmpty()) return null
             return HomeSection(
@@ -305,7 +323,8 @@ private fun MainFeed(
                 title = title,
                 destination = destination,
                 items = matching.take(2),
-                totalCount = matching.size
+                totalCount = matching.size,
+                moreFilter = moreFilter
             )
         }
 
@@ -317,9 +336,9 @@ private fun MainFeed(
             section("books", "کتابخانه", FeedTab.BOOKS,
                 items.filter { it.type == "book" }),
             section("lessons", "درس‌ها و مجموعه‌های آموزشی", FeedTab.MORE,
-                items.filter { it.type in setOf("course", "lesson") }),
+                items.filter { it.type in setOf("course", "lesson") }, moreFilter = "learning"),
             section("media", "صوت و ویدیو", FeedTab.MORE,
-                items.filter { it.type in setOf("audio", "video") }),
+                items.filter { it.type in setOf("audio", "video") }, moreFilter = "media"),
             section("topics", "موضوعات علمی", FeedTab.MORE,
                 items.filter { it.type == "topic" })
         )
@@ -342,7 +361,7 @@ private fun MainFeed(
                         SectionHeading(
                             title = section.title,
                             count = section.totalCount,
-                            onViewAll = { onSelectTab(section.destination) }
+                            onViewAll = { onSelectTab(section.destination, section.moreFilter) }
                         )
                     }
                     items(section.items, key = { "${section.key}-${it.id}" }) { row ->
@@ -359,7 +378,7 @@ private fun MainFeed(
             Text(
                 "نمایش بومی • محتوای عمومی و منتشرشده",
                 Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp),
-                color = JhdMuted, style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
@@ -373,14 +392,18 @@ private fun SectionHeading(title: String, count: Int, onViewAll: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        Box(
+            Modifier.width(3.dp).height(34.dp).clip(RoundedCornerShape(3.dp))
+                .background(MaterialTheme.colorScheme.secondary)
+        )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, color = Color(0xFF203A30), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("$count مطلب تازه", color = JhdMuted, style = MaterialTheme.typography.labelSmall)
+            Text(title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("$count مطلب", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
         }
         TextButton(onClick = onViewAll, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)) {
-            Text("مشاهدهٔ همه", color = JhdGreen, style = MaterialTheme.typography.labelMedium)
+            Text("مشاهدهٔ همه", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
             Spacer(Modifier.width(4.dp))
-            Icon(Icons.Default.ArrowForward, contentDescription = null, tint = JhdGreen, modifier = Modifier.size(15.dp))
+            Icon(Icons.Default.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
         }
     }
 }
@@ -401,14 +424,14 @@ private fun IntroCard(tab: FeedTab, count: Int) {
         FeedTab.BOOKS -> "کتاب‌ها و منابع آموزشی."
         FeedTab.MORE -> "راه‌های دسترسی و وضعیت اتصال."
     }
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(21.dp), colors = CardDefaults.cardColors(containerColor = JhdGreen)) {
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)) {
         Row(Modifier.fillMaxWidth().padding(19.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(sub, color = Color.White.copy(alpha = .9f), style = MaterialTheme.typography.bodyMedium, lineHeight = 22.sp)
-                Text(if (count > 0) "$count مطلب در این بخش" else "محتوا از فید سرور دریافت می‌شود", color = Color.White.copy(alpha = .7f), style = MaterialTheme.typography.labelSmall)
+                Text(title, color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(sub, color = MaterialTheme.colorScheme.onPrimary.copy(alpha = .9f), style = MaterialTheme.typography.bodyMedium, lineHeight = 22.sp)
+                Text(if (count > 0) "$count مطلب در این بخش" else "محتوا از فید سرور دریافت می‌شود", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = .7f), style = MaterialTheme.typography.labelSmall)
             }
-            Box(Modifier.size(52.dp).clip(CircleShape).background(Color.White.copy(alpha = .14f)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.onPrimary.copy(alpha = .14f)), contentAlignment = Alignment.Center) {
                 Icon(
                     when (tab) {
                         FeedTab.HOME -> Icons.Default.Home
@@ -416,7 +439,7 @@ private fun IntroCard(tab: FeedTab, count: Int) {
                         FeedTab.RESEARCH -> Icons.Default.School
                         FeedTab.BOOKS -> Icons.Default.MenuBook
                         FeedTab.MORE -> Icons.Default.LibraryBooks
-                    }, contentDescription = null, tint = Color.White, modifier = Modifier.size(29.dp)
+                    }, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(29.dp)
                 )
             }
         }
@@ -440,30 +463,30 @@ private fun PostCard(item: FeedItem, onOpen: () -> Unit) {
 private fun NewsCard(item: FeedItem, onOpen: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column {
             if (item.image.isNotBlank()) {
                 FeedImage(item.image, item.title, Modifier.fillMaxWidth().height(178.dp), Icons.Default.Article)
             } else {
                 Box(
-                    Modifier.fillMaxWidth().height(62.dp).background(JhdPale),
+                    Modifier.fillMaxWidth().height(62.dp).background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.CenterEnd
                 ) {
-                    Icon(Icons.Default.Campaign, contentDescription = null, tint = JhdGreen, modifier = Modifier.padding(end = 20.dp).size(31.dp))
+                    Icon(Icons.Default.Campaign, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 20.dp).size(31.dp))
                 }
             }
             Column(Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ContentBadge(typeLabel(item.type), JhdPale, JhdGreen)
+                    ContentBadge(typeLabel(item.type), MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.weight(1f))
-                    if (item.date.isNotBlank()) Text(readableDate(item.date), color = JhdMuted, fontSize = 11.sp, maxLines = 1)
+                    if (item.date.isNotBlank()) Text(readableDate(item.date), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
                 }
-                Text(item.title, color = Color(0xFF203A30), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 if (item.summary.isNotBlank()) {
-                    Text(item.summary, color = Color(0xFF4E5E55), style = MaterialTheme.typography.bodyMedium, lineHeight = 23.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, lineHeight = 23.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
                 CardActionLine(label = if (item.type == "event") "جزئیات رویداد" else if (item.type == "announcement") "مشاهدهٔ اطلاعیه" else "ادامهٔ خبر", icon = Icons.Default.ArrowForward)
             }
@@ -475,9 +498,9 @@ private fun NewsCard(item: FeedItem, onOpen: () -> Unit) {
 private fun ReadingCard(item: FeedItem, onOpen: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
@@ -488,22 +511,22 @@ private fun ReadingCard(item: FeedItem, onOpen: () -> Unit) {
                 )
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        ContentBadge(typeLabel(item.type), Color(0xFFEAF0FF), Color(0xFF244A8F))
+                        ContentBadge(typeLabel(item.type), MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.weight(1f))
-                        Icon(Icons.Default.BookmarkBorder, contentDescription = null, tint = Color(0xFF244A8F), modifier = Modifier.size(19.dp))
+                        Icon(Icons.Default.BookmarkBorder, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
                     }
-                    Text(item.title, color = Color(0xFF213653), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    if (item.summary.isNotBlank()) Text(item.summary, color = JhdMuted, style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    if (item.summary.isNotBlank()) Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
             }
-            HorizontalDivider(color = Color(0xFFE9EDF5))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 if (item.author.isNotBlank()) {
-                    Icon(Icons.Default.PersonOutline, contentDescription = null, tint = JhdMuted, modifier = Modifier.size(15.dp))
-                    Text(item.author, color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Icon(Icons.Default.PersonOutline, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
+                    Text(item.author, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (item.author.isNotBlank() && item.date.isNotBlank()) Text("•", color = JhdMuted, fontSize = 11.sp)
-                if (item.date.isNotBlank()) Text(readableDate(item.date), color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                if (item.author.isNotBlank() && item.date.isNotBlank()) Text("•", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                if (item.date.isNotBlank()) Text(readableDate(item.date), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                 Spacer(Modifier.weight(1f))
                 CardActionLine(label = "مطالعه", icon = Icons.Default.ArrowForward)
             }
@@ -515,9 +538,9 @@ private fun ReadingCard(item: FeedItem, onOpen: () -> Unit) {
 private fun BookCard(item: FeedItem, onOpen: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             Modifier.fillMaxWidth().padding(13.dp),
@@ -526,15 +549,15 @@ private fun BookCard(item: FeedItem, onOpen: () -> Unit) {
         ) {
             FeedImage(item.image, item.title, Modifier.width(104.dp).height(145.dp), Icons.Default.MenuBook)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ContentBadge("کتابخانه", Color(0xFFF8F0DC), Color(0xFF7A5A20))
-                Text(item.title, color = Color(0xFF3A3021), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                ContentBadge("کتابخانه", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+                Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 4, overflow = TextOverflow.Ellipsis)
                 if (item.author.isNotBlank()) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Icon(Icons.Default.PersonOutline, contentDescription = null, tint = Color(0xFF8A754D), modifier = Modifier.size(16.dp))
-                        Text(item.author, color = JhdMuted, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Icon(Icons.Default.PersonOutline, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(16.dp))
+                        Text(item.author, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                if (item.summary.isNotBlank()) Text(item.summary, color = Color(0xFF655B4B), style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (item.summary.isNotBlank()) Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 CardActionLine(label = "مشخصات کتاب", icon = Icons.Default.ArrowForward)
             }
         }
@@ -546,28 +569,28 @@ private fun LessonCard(item: FeedItem, onOpen: () -> Unit) {
     val isCourse = item.type == "course"
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(Modifier.fillMaxWidth()) {
-            Box(Modifier.width(5.dp).fillMaxHeight().defaultMinSize(minHeight = 138.dp).background(JhdGreen))
+            Box(Modifier.width(5.dp).fillMaxHeight().defaultMinSize(minHeight = 138.dp).background(MaterialTheme.colorScheme.primary))
             Column(Modifier.weight(1f).padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(JhdPale), contentAlignment = Alignment.Center) {
-                        Icon(if (isCourse) Icons.Default.LibraryBooks else Icons.Default.School, contentDescription = null, tint = JhdGreen, modifier = Modifier.size(23.dp))
+                    Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                        Icon(if (isCourse) Icons.Default.LibraryBooks else Icons.Default.School, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(23.dp))
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        ContentBadge(if (isCourse) "مجموعهٔ درسی" else "درس آموزشی", JhdPale, JhdGreen)
+                        ContentBadge(if (isCourse) "مجموعهٔ درسی" else "درس آموزشی", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.primary)
                         if (item.collection.isNotBlank() && !isCourse) {
-                            Text(item.collection, color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(item.collection, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
-                    if (item.date.isNotBlank()) Text(readableDate(item.date), color = JhdMuted, fontSize = 10.sp, maxLines = 1)
+                    if (item.date.isNotBlank()) Text(readableDate(item.date), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, maxLines = 1)
                 }
-                Text(item.title, color = Color(0xFF203A30), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                if (item.summary.isNotBlank()) Text(item.summary, color = Color(0xFF4E5E55), style = MaterialTheme.typography.bodySmall, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                if (item.author.isNotBlank()) Text("مدرس: " + item.author, color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (item.summary.isNotBlank()) Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                if (item.author.isNotBlank()) Text("مدرس: " + item.author, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 CardActionLine(label = if (isCourse) "ورود به مجموعه" else "مشاهدهٔ درس", icon = Icons.Default.ArrowForward)
             }
         }
@@ -578,22 +601,22 @@ private fun LessonCard(item: FeedItem, onOpen: () -> Unit) {
 private fun TopicCard(item: FeedItem, onOpen: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(Modifier.fillMaxWidth().padding(15.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
-            Box(Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFF0E9FA)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.tertiaryContainer), contentAlignment = Alignment.Center) {
                 if (item.image.isNotBlank()) {
                     FeedImage(item.image, item.title, Modifier.fillMaxSize(), Icons.Default.LibraryBooks)
                 } else {
-                    Icon(Icons.Default.LibraryBooks, contentDescription = null, tint = Color(0xFF6F4C91), modifier = Modifier.size(29.dp))
+                    Icon(Icons.Default.LibraryBooks, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.size(29.dp))
                 }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ContentBadge("موضوع علمی", Color(0xFFF0E9FA), Color(0xFF6F4C91))
-                Text(item.title, color = Color(0xFF39294A), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (item.summary.isNotBlank()) Text(item.summary, color = JhdMuted, style = MaterialTheme.typography.bodySmall, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                ContentBadge("موضوع علمی", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+                Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (item.summary.isNotBlank()) Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 CardActionLine(label = "معرفی موضوع", icon = Icons.Default.ArrowForward)
             }
         }
@@ -605,29 +628,29 @@ private fun MediaCard(item: FeedItem, onOpen: () -> Unit) {
     val isVideo = item.type == "video"
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(112.dp).height(94.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFFE7EFFA)), contentAlignment = Alignment.Center) {
+                Box(Modifier.width(112.dp).height(94.dp).clip(RoundedCornerShape(13.dp)).background(MaterialTheme.colorScheme.tertiaryContainer), contentAlignment = Alignment.Center) {
                     if (item.image.isNotBlank()) FeedImage(item.image, item.title, Modifier.fillMaxSize(), if (isVideo) Icons.Default.Videocam else Icons.Default.Headphones)
-                    else Icon(if (isVideo) Icons.Default.Videocam else Icons.Default.Headphones, contentDescription = null, tint = Color(0xFF315C8C), modifier = Modifier.size(34.dp))
+                    else Icon(if (isVideo) Icons.Default.Videocam else Icons.Default.Headphones, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.size(34.dp))
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    ContentBadge(if (isVideo) "ویدیوی آموزشی" else "فایل صوتی", Color(0xFFE7EFFA), Color(0xFF315C8C))
-                    Text(item.title, color = Color(0xFF253B52), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    if (item.author.isNotBlank()) Text(item.author, color = JhdMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    ContentBadge(if (isVideo) "ویدیوی آموزشی" else "فایل صوتی", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+                    Text(item.title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    if (item.author.isNotBlank()) Text(item.author, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             if (item.content.isNotBlank()) {
                 Text(
                     (if (isVideo) "ویدیوی مرتبط با: " else "صوت مرتبط با: ") + item.content,
-                    color = JhdMuted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
             }
-            HorizontalDivider(color = Color(0xFFE8EDF3))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             CardActionLine(label = "جزئیات و پیوند رسانه", icon = Icons.Default.OpenInNew)
         }
     }
@@ -637,18 +660,18 @@ private fun MediaCard(item: FeedItem, onOpen: () -> Unit) {
 private fun GeneralContentCard(item: FeedItem, onOpen: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                ContentBadge(typeLabel(item.type), JhdPale, JhdGreen)
+                ContentBadge(typeLabel(item.type), MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.weight(1f))
-                if (item.date.isNotBlank()) Text(readableDate(item.date), color = JhdMuted, style = MaterialTheme.typography.labelSmall)
+                if (item.date.isNotBlank()) Text(readableDate(item.date), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
             }
-            Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFF203A30), maxLines = 3, overflow = TextOverflow.Ellipsis)
-            if (item.summary.isNotBlank()) Text(item.summary, color = JhdMuted, style = MaterialTheme.typography.bodyMedium, lineHeight = 22.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            Text(item.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            if (item.summary.isNotBlank()) Text(item.summary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, lineHeight = 22.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
             CardActionLine(label = "جزئیات مطلب", icon = Icons.Default.ArrowForward)
         }
     }
@@ -664,8 +687,8 @@ private fun ContentBadge(label: String, background: Color, foreground: Color) {
 @Composable
 private fun CardActionLine(label: String, icon: ImageVector) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(label, color = JhdGreen, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-        Icon(icon, contentDescription = null, tint = JhdGreen, modifier = Modifier.size(16.dp))
+        Text(label, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
     }
 }
 
@@ -673,17 +696,17 @@ private fun CardActionLine(label: String, icon: ImageVector) {
 private fun DetailPage(item: FeedItem, modifier: Modifier, onOpen: () -> Unit, onShare: () -> Unit) {
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(15.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+            Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                    Text(typeLabel(item.type), color = JhdGreen, fontWeight = FontWeight.Bold)
+                    Text(typeLabel(item.type), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     val byline = listOf(item.author, readableDate(item.date)).filter { it.isNotBlank() }.joinToString(" • ")
-                    if (byline.isNotBlank()) Text(byline, color = JhdMuted, style = MaterialTheme.typography.labelMedium)
+                    if (byline.isNotBlank()) Text(byline, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
                     if (item.image.isNotBlank()) FeedImage(item.image, item.title, Modifier.fillMaxWidth().height(230.dp))
-                    HorizontalDivider(color = Color(0xFFE6ECE8))
-                    Text(item.content.ifBlank { item.summary.ifBlank { "متن کامل در منبع اصلی منتشر شده است." } }, style = MaterialTheme.typography.bodyLarge, color = Color(0xFF30483D), lineHeight = 28.sp)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Text(item.content.ifBlank { item.summary.ifBlank { "متن کامل در منبع اصلی منتشر شده است." } }, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface, lineHeight = 28.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onOpen, enabled = item.url.startsWith("https://"), colors = ButtonDefaults.buttonColors(containerColor = JhdGreen)) {
+                        Button(onClick = onOpen, enabled = item.url.startsWith("https://"), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
                             Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("مشاهدهٔ منبع اصلی")
                         }
                         TextButton(onClick = onShare) { Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("اشتراک") }
@@ -696,25 +719,25 @@ private fun DetailPage(item: FeedItem, modifier: Modifier, onOpen: () -> Unit, o
 
 @Composable
 private fun EmptyCard(loading: Boolean, searching: Boolean, tab: FeedTab, onRetry: () -> Unit) {
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxWidth().padding(27.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (loading) CircularProgressIndicator(color = JhdGreen) else Icon(Icons.Default.LibraryBooks, null, tint = JhdGreen, modifier = Modifier.size(42.dp))
+            if (loading) CircularProgressIndicator(color = MaterialTheme.colorScheme.primary) else Icon(Icons.Default.LibraryBooks, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
             Text(when {
                 loading -> "در حال دریافت محتوا…"
                 searching -> "مطلبی با این عبارت پیدا نشد."
                 tab == FeedTab.BOOKS -> "هنوز کتابی برای نمایش دریافت نشده است."
                 else -> "در این بخش فعلاً مطلبی موجود نیست."
-            }, color = JhdMuted, style = MaterialTheme.typography.bodyMedium)
-            if (!loading) Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = JhdGreen)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(5.dp)); Text("تلاش دوباره") }
+            }, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            if (!loading) Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(5.dp)); Text("تلاش دوباره") }
         }
     }
 }
 
 @Composable
 private fun StatusCard(message: String, showRetry: Boolean, onRetry: () -> Unit) {
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF5DF))) {
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text(message, color = Color(0xFF684B13), style = MaterialTheme.typography.bodySmall)
+            Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             if (showRetry) TextButton(onClick = onRetry) { Text("تلاش دوباره") }
         }
     }
@@ -723,26 +746,64 @@ private fun StatusCard(message: String, showRetry: Boolean, onRetry: () -> Unit)
 @Composable
 private fun MorePage(
     modifier: Modifier,
+    initialFilter: String,
     items: List<FeedItem>,
     loading: Boolean,
+    darkTheme: Boolean,
+    onThemeChange: (Boolean) -> Unit,
+    onAccount: () -> Unit,
     onSite: () -> Unit,
     onRefresh: () -> Unit,
     onOpen: (FeedItem) -> Unit
 ) {
-    var selectedType by remember { mutableStateOf("all") }
+    var selectedType by remember(initialFilter) { mutableStateOf(initialFilter) }
     val filters = listOf(
         "all" to "همه",
+        "learning" to "درس و دوره",
         "lesson" to "درس‌ها",
         "course" to "دوره‌ها",
         "topic" to "موضوعات",
+        "media" to "صوت و ویدیو",
         "audio" to "صوت",
         "video" to "ویدیو"
     )
     val visibleItems = remember(items, selectedType) {
-        if (selectedType == "all") items else items.filter { it.type == selectedType }
+        when (selectedType) {
+            "all" -> items
+            "learning" -> items.filter { it.type in setOf("course", "lesson") }
+            "media" -> items.filter { it.type in setOf("audio", "video") }
+            else -> items.filter { it.type == selectedType }
+        }
     }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(13.dp, 14.dp, 13.dp, 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { IntroCard(FeedTab.MORE, visibleItems.size) }
+        item {
+            MoreCard(
+                title = "حساب کاربری",
+                body = "ورود، ثبت‌نام و مدیریت حساب شخصی از طریق سامانهٔ جامعة‌الهدی.",
+                action = "ورود یا ثبت‌نام",
+                onClick = onAccount
+            )
+        }
+        item {
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("حالت تاریک", fontWeight = FontWeight.SemiBold)
+                        Text("حالت روشن به‌صورت پیش‌فرض فعال است.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(checked = darkTheme, onCheckedChange = onThemeChange)
+                }
+            }
+        }
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(filters, key = { it.first }) { filter ->
@@ -762,15 +823,15 @@ private fun MorePage(
         item { MoreCard("وب‌سایت رسمی جامعه‌الهدی", "برای دسترسی به همهٔ صفحه‌ها و اطلاعات تکمیلی، وب‌سایت رسمی را باز کنید.", "باز کردن وب‌سایت", onSite) }
         item { MoreCard("تازه‌سازی محتوا", "آخرین فید موفق در تلفن نگهداری می‌شود تا متن‌های قبلی هنگام قطع اینترنت در دسترس بماند.", "تلاش برای به‌روزرسانی", onRefresh) }
         item {
-            Text("این برنامه محتوای عمومی منتشرشدهٔ جامعه‌الهدی را از API وب‌سایت دریافت می‌کند.", Modifier.padding(4.dp), color = JhdMuted, style = MaterialTheme.typography.bodySmall, lineHeight = 22.sp)
+            Text("این برنامه محتوای عمومی منتشرشدهٔ جامعه‌الهدی را از API وب‌سایت دریافت می‌کند.", Modifier.padding(4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, lineHeight = 22.sp)
         }
     }
 }@Composable
 private fun MoreCard(title: String, body: String, action: String, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(17.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(body, color = JhdMuted, style = MaterialTheme.typography.bodyMedium, lineHeight = 22.sp)
+            Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, lineHeight = 22.sp)
             TextButton(onClick = onClick) { Text(action); Spacer(Modifier.width(5.dp)); Icon(Icons.Default.OpenInNew, null, modifier = Modifier.size(16.dp)) }
         }
     }
@@ -789,13 +850,13 @@ private fun FeedImage(
         } else null
     }
     Box(
-        modifier = modifier.clip(RoundedCornerShape(11.dp)).background(JhdPale),
+        modifier = modifier.clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primaryContainer),
         contentAlignment = Alignment.Center
     ) {
         if (bitmap != null) {
             Image(bitmap!!.asImageBitmap(), contentDescription = description, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         } else {
-            Icon(placeholder, contentDescription = description, tint = JhdGreen.copy(alpha = .8f), modifier = Modifier.size(31.dp))
+            Icon(placeholder, contentDescription = description, tint = MaterialTheme.colorScheme.primary.copy(alpha = .8f), modifier = Modifier.size(31.dp))
         }
     }
 }

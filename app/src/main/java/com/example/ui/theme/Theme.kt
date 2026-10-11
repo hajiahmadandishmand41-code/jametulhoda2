@@ -19,10 +19,18 @@ private val DarkColorScheme = darkColorScheme(
     onSecondary = DarkGoldOnSecondary,
     secondaryContainer = DarkGoldSecondaryContainer,
     onSecondaryContainer = DarkGoldOnSecondaryContainer,
+    tertiary = DarkSageTertiary,
+    onTertiary = DarkSageOnTertiary,
+    tertiaryContainer = DarkSageTertiaryContainer,
+    onTertiaryContainer = DarkSageOnTertiaryContainer,
     background = DarkEmeraldBackground,
     onBackground = DarkEmeraldOnBackground,
     surface = DarkEmeraldSurface,
-    onSurface = DarkEmeraldOnSurface
+    onSurface = DarkEmeraldOnSurface,
+    surfaceVariant = DarkEmeraldSurfaceVariant,
+    onSurfaceVariant = DarkEmeraldOnSurfaceVariant,
+    outline = DarkEmeraldOutline,
+    outlineVariant = DarkEmeraldOutlineVariant
 )
 
 private val LightColorScheme = lightColorScheme(
@@ -36,10 +44,16 @@ private val LightColorScheme = lightColorScheme(
     onSecondaryContainer = GoldOnSecondaryContainer,
     tertiary = SageTertiary,
     onTertiary = SageOnTertiary,
+    tertiaryContainer = SageTertiaryContainer,
+    onTertiaryContainer = SageOnTertiaryContainer,
     background = EmeraldBackground,
     onBackground = EmeraldOnBackground,
     surface = EmeraldSurface,
-    onSurface = EmeraldOnSurface
+    onSurface = EmeraldOnSurface,
+    surfaceVariant = EmeraldSurfaceVariant,
+    onSurfaceVariant = EmeraldOnSurfaceVariant,
+    outline = EmeraldOutline,
+    outlineVariant = EmeraldOutlineVariant
 )
 
 @Composable
