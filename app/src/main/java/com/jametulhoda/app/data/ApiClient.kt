@@ -31,7 +31,7 @@ class ApiClient(baseUrl: String) {
         .retryOnConnectionFailure(true)
         .build()
 
-    fun buildUrl(path: String, query: Map<String, String> = {}): String {
+    fun buildUrl(path: String, query: Map<String, String> = emptyMap()): String {
         val builder = (root + path).toHttpUrl().newBuilder()
         for ((k, v) in query) {
             if (v.isNotEmpty()) builder.addQueryParameter(k, v)
@@ -39,7 +39,7 @@ class ApiClient(baseUrl: String) {
         return builder.build().toString()
     }
 
-    suspend fun get(path: String, query: Map<String, String> = {}, token: String? = null): JSONObject {
+    suspend fun get(path: String, query: Map<String, String> = emptyMap(), token: String? = null): JSONObject {
         val request = Request.Builder()
             .url(buildUrl(path, query))
             .header("Accept", "application/json")

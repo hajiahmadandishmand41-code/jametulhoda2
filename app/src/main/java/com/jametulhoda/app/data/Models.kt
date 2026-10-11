@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * مدل‌های قرارداد `/api/mobile/*` + پارس ایمن JSON.
+ * مدل‌های قرارداد /api/mobile + پارس ایمن JSON.
  *
  * همهٔ پارسرها توابع خالص‌اند و در تست‌های JVM با نمونه JSON واقعی سنجیده
  * می‌شوند؛ هیچ وابستگی به Android در این فایل نیست.

@@ -32,7 +32,7 @@ class JametulHodaApp : Application(), ImageLoaderFactory {
         return ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(memoryPercent)
+                    .maxSizePercent(memoryPercent.toDouble())
                     .build()
             }
             .diskCache {

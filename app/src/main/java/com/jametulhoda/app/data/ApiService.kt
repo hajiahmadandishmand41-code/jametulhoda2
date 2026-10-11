@@ -3,7 +3,7 @@ package com.jametulhoda.app.data
 import org.json.JSONObject
 
 /**
- * سرویس تایپ‌شدهٔ `/api/mobile/*` — همان قرارداد `docs/MOBILE-API.md`.
+ * سرویس تایپ‌شدهٔ /api/mobile — همان قرارداد `docs/MOBILE-API.md`.
  * هیچ مسیری خارج از allowlist سرور استفاده نمی‌شود.
  */
 class ApiService(private val client: ApiClient) {
