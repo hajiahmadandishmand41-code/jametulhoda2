@@ -81,11 +81,19 @@ jobs:
           fi
           echo "Gradle configuration OK"
 
-      - name: Run unit tests (full + lite)
+      - name: Discover Gradle tasks
         shell: bash
         run: |
           set -euo pipefail
-          if ! gradle --no-daemon :app:testFullReleaseUnitTest :app:testLiteReleaseUnitTest > /tmp/gradle-test.log 2>&1; then
+          gradle --no-daemon :app:tasks --all > /tmp/tasks.log 2>&1 || true
+          echo "::notice::Available test/assemble tasks:"
+          grep -E "^(test|assemble)[A-Za-z]+ - " /tmp/tasks.log | head -24 | sed 's/^/::notice::/' || true
+
+      - name: Run unit tests (all variants)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gradle --no-daemon :app:test > /tmp/gradle-test.log 2>&1; then
             echo "::error::Gradle unit tests failed"
             grep -A 14 "What went wrong" /tmp/gradle-test.log | sed 's/^/::error::/' | head -14 || true
             grep -E "^e: |error: |FAILED|Test.*failed" /tmp/gradle-test.log | head -6 | sed 's/^/::error::/' || true
