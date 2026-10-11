@@ -120,11 +120,16 @@ jobs:
           mkdir -p release
           cp app/build/outputs/apk/full/release/*.apk release/jametulhoda-full.apk
           cp app/build/outputs/apk/lite/release/*.apk release/jametulhoda-lite.apk
-          echo "== APK sizes =="
-          stat -c '%n %s bytes' release/*.apk
-          sha256sum release/*.apk
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/jametulhoda-full.apk | sed -n '1,5p'
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/jametulhoda-lite.apk | sed -n '1,5p'
+          full_size=$(stat -c%s release/jametulhoda-full.apk)
+          lite_size=$(stat -c%s release/jametulhoda-lite.apk)
+          echo "::notice::APK size full: $full_size bytes"
+          echo "::notice::APK size lite: $lite_size bytes"
+          echo "## APK sizes" >> "$GITHUB_STEP_SUMMARY"
+          echo "- jametulhoda-full.apk: $full_size bytes" >> "$GITHUB_STEP_SUMMARY"
+          echo "- jametulhoda-lite.apk: $lite_size bytes" >> "$GITHUB_STEP_SUMMARY"
+          sha256sum release/*.apk >> "$GITHUB_STEP_SUMMARY"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/jametulhoda-full.apk | sed -n '1,5p' | sed 's/^/::notice::full /'
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/jametulhoda-lite.apk | sed -n '1,5p' | sed 's/^/::notice::lite /'
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v7
@@ -137,7 +142,7 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-latest

@@ -98,7 +98,13 @@ object Downloader {
             "webp" -> "image/webp"
             "doc" -> "application/msword"
             "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            else -> MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+            else -> {
+                try {
+                    MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+                } catch (e: Throwable) {
+                    "application/octet-stream"
+                }
+            }
         }
     }
 
