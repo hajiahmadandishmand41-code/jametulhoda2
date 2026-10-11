@@ -69,11 +69,41 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
+      - name: Gradle configuration check
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gradle --no-daemon help > /tmp/gradle-help.log 2>&1; then
+            echo "::error::Gradle configuration failed"
+            grep -E "error|e: |FAILURE|What went wrong|Could not|Unresolved" /tmp/gradle-help.log | head -8 | sed 's/^/::error::/' || true
+            tail -30 /tmp/gradle-help.log | sed 's/^/::warning::/'
+            exit 1
+          fi
+          echo "Gradle configuration OK"
+
       - name: Run unit tests (full + lite)
-        run: gradle --no-daemon --stacktrace :app:testFullReleaseUnitTest :app:testLiteReleaseUnitTest
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gradle --no-daemon --stacktrace :app:testFullReleaseUnitTest :app:testLiteReleaseUnitTest > /tmp/gradle-test.log 2>&1; then
+            echo "::error::Gradle unit tests failed"
+            grep -E "error|e: |FAILED|FAILURE|What went wrong|Could not|Unresolved|Test.*failed" /tmp/gradle-test.log | head -8 | sed 's/^/::error::/' || true
+            tail -30 /tmp/gradle-test.log | sed 's/^/::warning::/'
+            exit 1
+          fi
+          echo "Unit tests OK"
 
       - name: Build full and lite release APKs
-        run: gradle --no-daemon --stacktrace :app:assembleFullRelease :app:assembleLiteRelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gradle --no-daemon --stacktrace :app:assembleFullRelease :app:assembleLiteRelease > /tmp/gradle-apk.log 2>&1; then
+            echo "::error::Gradle assemble failed"
+            grep -E "error|e: |FAILURE|What went wrong|Could not|Unresolved" /tmp/gradle-apk.log | head -8 | sed 's/^/::error::/' || true
+            tail -30 /tmp/gradle-apk.log | sed 's/^/::warning::/'
+            exit 1
+          fi
+          echo "APK build OK"
 
       - name: Collect and verify APKs
         shell: bash

@@ -30,7 +30,7 @@ android {
       versionNameSuffix = ""
       buildConfigField("boolean", "LIGHTWEIGHT", "false")
       buildConfigField("int", "IMAGE_MEMORY_PERCENT", "25")
-      buildConfigField("long", "IMAGE_DISK_CACHE_BYTES", String.valueOf(64L * 1024 * 1024))
+      buildConfigField("long", "IMAGE_DISK_CACHE_BYTES", "67108864") // 64MB
       buildConfigField("int", "MAX_BITMAP_DIMEN", "2560")
     }
     create("lite") {
@@ -39,7 +39,7 @@ android {
       versionNameSuffix = "-lite"
       buildConfigField("boolean", "LIGHTWEIGHT", "true")
       buildConfigField("int", "IMAGE_MEMORY_PERCENT", "12")
-      buildConfigField("long", "IMAGE_DISK_CACHE_BYTES", String.valueOf(20L * 1024 * 1024))
+      buildConfigField("long", "IMAGE_DISK_CACHE_BYTES", "20971520") // 20MB
       buildConfigField("int", "MAX_BITMAP_DIMEN", "1280")
     }
   }
