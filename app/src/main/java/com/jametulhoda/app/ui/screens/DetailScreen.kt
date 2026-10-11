@@ -162,8 +162,8 @@ private fun kindLabel(kind: String): String = when (kind) {
 private fun sizeLabel(bytes: Long): String {
     if (bytes <= 0) return ""
     val kb = bytes / 1024.0
-    return if (kb >= 1024) String.format(java.util.Locale.US, "%.1f مگابایت", kb / 1024.0)
-    else String.format(java.util.Locale.US, "%.0f کیلوبایت", kb)
+    return if (kb >= 1024) "%.1f مگابایت".format(kb / 1024.0)
+    else "%.0f کیلوبایت".format(kb)
 }
 
 /**

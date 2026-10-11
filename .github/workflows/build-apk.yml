@@ -95,8 +95,8 @@ jobs:
           set -euo pipefail
           if ! gradle --no-daemon :app:test > /tmp/gradle-test.log 2>&1; then
             echo "::error::Gradle unit tests failed"
-            grep -A 14 "What went wrong" /tmp/gradle-test.log | sed 's/^/::error::/' | head -14 || true
-            grep -E "^e: |error: |FAILED|Test.*failed" /tmp/gradle-test.log | head -6 | sed 's/^/::error::/' || true
+            grep -E "^e: " /tmp/gradle-test.log | head -8 | sed 's/^/::error::/' || true
+            grep -A 6 "What went wrong" /tmp/gradle-test.log | sed 's/^/::error::/' || true
             exit 1
           fi
           echo "Unit tests OK"
@@ -107,8 +107,8 @@ jobs:
           set -euo pipefail
           if ! gradle --no-daemon :app:assembleFullRelease :app:assembleLiteRelease > /tmp/gradle-apk.log 2>&1; then
             echo "::error::Gradle assemble failed"
-            grep -A 14 "What went wrong" /tmp/gradle-apk.log | sed 's/^/::error::/' | head -14 || true
-            grep -E "^e: |error: |FAILED" /tmp/gradle-apk.log | head -6 | sed 's/^/::error::/' || true
+            grep -E "^e: " /tmp/gradle-apk.log | head -8 | sed 's/^/::error::/' || true
+            grep -A 6 "What went wrong" /tmp/gradle-apk.log | sed 's/^/::error::/' || true
             exit 1
           fi
           echo "APK build OK"
