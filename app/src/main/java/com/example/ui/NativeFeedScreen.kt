@@ -118,7 +118,7 @@ private object FeedRepository {
 }
 
 @Composable
-fun NativeFeedScreen() {
+fun NativeFeedScreen(darkTheme: Boolean, onThemeChange: (Boolean) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cache = remember { FeedRepository.cached(context) }
@@ -129,6 +129,7 @@ fun NativeFeedScreen() {
     var searchShown by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var accountShown by remember { mutableStateOf(false) }
 
     fun refresh() {
         if (loading) return
@@ -202,6 +203,9 @@ fun NativeFeedScreen() {
                     modifier = Modifier.padding(padding),
                     items = feed.filter { it.type in setOf("course", "lesson", "topic", "audio", "video") },
                     loading = loading,
+                    darkTheme = darkTheme,
+                    onThemeChange = onThemeChange,
+                    onAccount = { accountShown = true },
                     onSite = { openExternal(context, "https://jametulhoda.vercel.app/") },
                     onRefresh = { refresh() },
                     onOpen = { selected = it }
@@ -214,6 +218,9 @@ fun NativeFeedScreen() {
                 )
             }
         }
+        if (accountShown) {
+            MobileAccountDialog(onDismiss = { accountShown = false })
+        }
     }
 }
 
@@ -223,7 +230,7 @@ private fun NativeHeader(
     onBack: () -> Unit, onSearchToggle: () -> Unit, onSearchChange: (String) -> Unit,
     onRefresh: () -> Unit, onShare: () -> Unit
 ) {
-    Surface(color = Color.White, shadowElevation = 2.dp) {
+    Surface(color = Color.White, shadowElevation = 0.dp) {
         Column {
             Row(
                 Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
@@ -266,7 +273,7 @@ private fun NativeHeader(
 
 @Composable
 private fun NativeNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
-    Surface(color = Color.White, shadowElevation = 8.dp) {
+    Surface(color = Color.White, shadowElevation = 0.dp) {
         NavigationBar(containerColor = Color.White, tonalElevation = 0.dp) {
             FeedTab.values().forEach { tab ->
                 val icon = when (tab) {
@@ -725,6 +732,9 @@ private fun MorePage(
     modifier: Modifier,
     items: List<FeedItem>,
     loading: Boolean,
+    darkTheme: Boolean,
+    onThemeChange: (Boolean) -> Unit,
+    onAccount: () -> Unit,
     onSite: () -> Unit,
     onRefresh: () -> Unit,
     onOpen: (FeedItem) -> Unit
@@ -743,6 +753,33 @@ private fun MorePage(
     }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(13.dp, 14.dp, 13.dp, 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { IntroCard(FeedTab.MORE, visibleItems.size) }
+        item {
+            MoreCard(
+                title = "حساب کاربری",
+                body = "ورود، ثبت‌نام و مدیریت حساب شخصی از طریق سامانهٔ جامعة‌الهدی.",
+                action = "ورود یا ثبت‌نام",
+                onClick = onAccount
+            )
+        }
+        item {
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("حالت تاریک", fontWeight = FontWeight.SemiBold)
+                        Text("حالت روشن به‌صورت پیش‌فرض فعال است.", color = JhdMuted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(checked = darkTheme, onCheckedChange = onThemeChange)
+                }
+            }
+        }
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(filters, key = { it.first }) { filter ->
