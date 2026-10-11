@@ -257,7 +257,7 @@ fun DetailScreen(
                                 if (e.status == 401) {
                                     snackbar.showSnackbar("برای پسندیدن محتوا ابتدا وارد حساب کاربری شوید.")
                                 } else {
-                                    snackbar.showSnackbar(e.message.ifBlank { "خطا در ثبت پسند." })
+                                    snackbar.showSnackbar(e.message?.takeIf { it.isNotBlank() } ?: "خطا در ثبت پسند.")
                                 }
                             } catch (e: Exception) {
                                 snackbar.showSnackbar("اتصال به سرور برقرار نشد؛ بعداً تلاش کنید.")

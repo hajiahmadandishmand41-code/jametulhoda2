@@ -176,7 +176,7 @@ private fun AuthForms(
                         loggedIn = true
                         onLoggedIn()
                     } catch (e: ApiException) {
-                        snackbar.showSnackbar(e.message.ifBlank { "درخواست نامعتبر بود." })
+                        snackbar.showSnackbar(e.message?.takeIf { it.isNotBlank() } ?: "درخواست نامعتبر بود.")
                     } catch (e: Exception) {
                         snackbar.showSnackbar("اتصال به سرور برقرار نشد؛ بعداً تلاش کنید.")
                     } finally {
