@@ -85,10 +85,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! gradle --no-daemon --stacktrace :app:testFullReleaseUnitTest :app:testLiteReleaseUnitTest > /tmp/gradle-test.log 2>&1; then
+          if ! gradle --no-daemon :app:testFullReleaseUnitTest :app:testLiteReleaseUnitTest > /tmp/gradle-test.log 2>&1; then
             echo "::error::Gradle unit tests failed"
-            grep -E "error|e: |FAILED|FAILURE|What went wrong|Could not|Unresolved|Test.*failed" /tmp/gradle-test.log | head -8 | sed 's/^/::error::/' || true
-            tail -30 /tmp/gradle-test.log | sed 's/^/::warning::/'
+            grep -A 14 "What went wrong" /tmp/gradle-test.log | sed 's/^/::error::/' | head -14 || true
+            grep -E "^e: |error: |FAILED|Test.*failed" /tmp/gradle-test.log | head -6 | sed 's/^/::error::/' || true
             exit 1
           fi
           echo "Unit tests OK"
@@ -97,10 +97,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! gradle --no-daemon --stacktrace :app:assembleFullRelease :app:assembleLiteRelease > /tmp/gradle-apk.log 2>&1; then
+          if ! gradle --no-daemon :app:assembleFullRelease :app:assembleLiteRelease > /tmp/gradle-apk.log 2>&1; then
             echo "::error::Gradle assemble failed"
-            grep -E "error|e: |FAILURE|What went wrong|Could not|Unresolved" /tmp/gradle-apk.log | head -8 | sed 's/^/::error::/' || true
-            tail -30 /tmp/gradle-apk.log | sed 's/^/::warning::/'
+            grep -A 14 "What went wrong" /tmp/gradle-apk.log | sed 's/^/::error::/' | head -14 || true
+            grep -E "^e: |error: |FAILED" /tmp/gradle-apk.log | head -6 | sed 's/^/::error::/' || true
             exit 1
           fi
           echo "APK build OK"
