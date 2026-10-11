@@ -64,7 +64,8 @@ private data class HomeSection(
     val title: String,
     val destination: FeedTab,
     val items: List<FeedItem>,
-    val totalCount: Int
+    val totalCount: Int,
+    val moreFilter: String = "all"
 )
 
 private object FeedRepository {
@@ -125,6 +126,7 @@ fun NativeFeedScreen(darkTheme: Boolean, onThemeChange: (Boolean) -> Unit) {
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var accountShown by remember { mutableStateOf(false) }
+    var moreFilter by remember { mutableStateOf("all") }
 
     fun refresh() {
         if (loading) return
@@ -179,7 +181,14 @@ fun NativeFeedScreen(darkTheme: Boolean, onThemeChange: (Boolean) -> Unit) {
                     }
                 )
             },
-            bottomBar = { if (selected == null) NativeNavigation(tab) { tab = it; search = ""; if (it != FeedTab.MORE) selected = null } }
+            bottomBar = {
+                if (selected == null) NativeNavigation(tab) { destination ->
+                    tab = destination
+                    search = ""
+                    if (destination == FeedTab.MORE) moreFilter = "all"
+                    else selected = null
+                }
+            }
         ) { padding ->
             when {
                 selected != null -> DetailPage(
@@ -196,6 +205,7 @@ fun NativeFeedScreen(darkTheme: Boolean, onThemeChange: (Boolean) -> Unit) {
                 )
                 tab == FeedTab.MORE -> MorePage(
                     modifier = Modifier.padding(padding),
+                    initialFilter = moreFilter,
                     items = feed.filter { it.type in setOf("course", "lesson", "topic", "audio", "video") },
                     loading = loading,
                     darkTheme = darkTheme,
@@ -209,7 +219,12 @@ fun NativeFeedScreen(darkTheme: Boolean, onThemeChange: (Boolean) -> Unit) {
                     modifier = Modifier.padding(padding), items = visible, tab = tab,
                     hasCached = feed.isNotEmpty(), loading = loading, error = error,
                     query = search, onRetry = { refresh() }, onOpen = { selected = it },
-                    onSelectTab = { destination -> tab = destination; search = ""; searchShown = false },
+                    onSelectTab = { destination, filter ->
+                        tab = destination
+                        search = ""
+                        searchShown = false
+                        if (destination == FeedTab.MORE) moreFilter = filter
+                    },
                 )
             }
         }
@@ -292,14 +307,15 @@ private fun NativeNavigation(selected: FeedTab, onSelect: (FeedTab) -> Unit) {
 private fun MainFeed(
     modifier: Modifier, items: List<FeedItem>, tab: FeedTab, hasCached: Boolean,
     loading: Boolean, error: String?, query: String,
-    onRetry: () -> Unit, onOpen: (FeedItem) -> Unit, onSelectTab: (FeedTab) -> Unit
+    onRetry: () -> Unit, onOpen: (FeedItem) -> Unit, onSelectTab: (FeedTab, String) -> Unit
 ) {
     val homeSections = remember(items) {
         fun section(
             key: String,
             title: String,
             destination: FeedTab,
-            matching: List<FeedItem>
+            matching: List<FeedItem>,
+            moreFilter: String = "all"
         ): HomeSection? {
             if (matching.isEmpty()) return null
             return HomeSection(
@@ -307,7 +323,8 @@ private fun MainFeed(
                 title = title,
                 destination = destination,
                 items = matching.take(2),
-                totalCount = matching.size
+                totalCount = matching.size,
+                moreFilter = moreFilter
             )
         }
 
@@ -319,9 +336,9 @@ private fun MainFeed(
             section("books", "کتابخانه", FeedTab.BOOKS,
                 items.filter { it.type == "book" }),
             section("lessons", "درس‌ها و مجموعه‌های آموزشی", FeedTab.MORE,
-                items.filter { it.type in setOf("course", "lesson") }),
+                items.filter { it.type in setOf("course", "lesson") }, moreFilter = "learning"),
             section("media", "صوت و ویدیو", FeedTab.MORE,
-                items.filter { it.type in setOf("audio", "video") }),
+                items.filter { it.type in setOf("audio", "video") }, moreFilter = "media"),
             section("topics", "موضوعات علمی", FeedTab.MORE,
                 items.filter { it.type == "topic" })
         )
@@ -344,7 +361,7 @@ private fun MainFeed(
                         SectionHeading(
                             title = section.title,
                             count = section.totalCount,
-                            onViewAll = { onSelectTab(section.destination) }
+                            onViewAll = { onSelectTab(section.destination, section.moreFilter) }
                         )
                     }
                     items(section.items, key = { "${section.key}-${it.id}" }) { row ->
@@ -729,6 +746,7 @@ private fun StatusCard(message: String, showRetry: Boolean, onRetry: () -> Unit)
 @Composable
 private fun MorePage(
     modifier: Modifier,
+    initialFilter: String,
     items: List<FeedItem>,
     loading: Boolean,
     darkTheme: Boolean,
@@ -738,17 +756,24 @@ private fun MorePage(
     onRefresh: () -> Unit,
     onOpen: (FeedItem) -> Unit
 ) {
-    var selectedType by remember { mutableStateOf("all") }
+    var selectedType by remember(initialFilter) { mutableStateOf(initialFilter) }
     val filters = listOf(
         "all" to "همه",
+        "learning" to "درس و دوره",
         "lesson" to "درس‌ها",
         "course" to "دوره‌ها",
         "topic" to "موضوعات",
+        "media" to "صوت و ویدیو",
         "audio" to "صوت",
         "video" to "ویدیو"
     )
     val visibleItems = remember(items, selectedType) {
-        if (selectedType == "all") items else items.filter { it.type == selectedType }
+        when (selectedType) {
+            "all" -> items
+            "learning" -> items.filter { it.type in setOf("course", "lesson") }
+            "media" -> items.filter { it.type in setOf("audio", "video") }
+            else -> items.filter { it.type == selectedType }
+        }
     }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(13.dp, 14.dp, 13.dp, 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { IntroCard(FeedTab.MORE, visibleItems.size) }
