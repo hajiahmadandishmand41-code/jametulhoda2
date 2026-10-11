@@ -93,13 +93,13 @@ class AppRepository(private val api: ApiService, context: Context) {
     // ─── محتوا ─────────────────────────────────────────────────────
 
     suspend fun home(): HomeData = withCache("home", emptyMap(), ApiParser::parseHome) {
-        api.home(token)
+        api.homeRaw(token)
     }
 
     suspend fun posts(type: String, page: Int, search: String = "", topic: Int = 0): PagedItems {
         val query = mapOf("type" to type, "page" to page.toString(), "search" to search, "topic" to topic.toString())
         return withCache("posts", query, ApiParser::parseList) {
-            api.posts(type, page, PAGE_SIZE, search, topic, token = token)
+            api.postsRaw(type, page, PAGE_SIZE, search, topic, token = token)
         }
     }
 
@@ -109,14 +109,14 @@ class AppRepository(private val api: ApiService, context: Context) {
     suspend fun books(page: Int, search: String = "", topic: Int = 0): PagedItems {
         val query = mapOf("page" to page.toString(), "search" to search, "topic" to topic.toString())
         return withCache("books", query, ApiParser::parseList) {
-            api.books(page, PAGE_SIZE, search, topic, token)
+            api.booksRaw(page, PAGE_SIZE, search, topic, token)
         }
     }
 
     suspend fun bookDetail(slug: String, id: Int = 0): ContentItem = api.book(id, slug, token)
 
     suspend fun collections(): List<Collection> = withCache("collections", emptyMap(), ApiParser::parseCollections) {
-        api.collections()
+        api.collectionsRaw()
     }
 
     suspend fun lessons(page: Int, collection: Int = 0, volume: Int = 0, search: String = ""): PagedItems {
@@ -127,7 +127,7 @@ class AppRepository(private val api: ApiService, context: Context) {
             "search" to search,
         )
         return withCache("lessons", query, ApiParser::parseList) {
-            api.lessons(page, PAGE_SIZE, collection, volume, search, token)
+            api.lessonsRaw(page, PAGE_SIZE, collection, volume, search, token)
         }
     }
 
@@ -140,7 +140,7 @@ class AppRepository(private val api: ApiService, context: Context) {
     suspend fun media(kind: String, page: Int): PagedItems {
         val query = mapOf("kind" to kind, "page" to page.toString())
         return withCache("media", query, ApiParser::parseList) {
-            api.media(kind, page, PAGE_SIZE, token)
+            api.mediaRaw(kind, page, PAGE_SIZE, token)
         }
     }
 
@@ -149,16 +149,16 @@ class AppRepository(private val api: ApiService, context: Context) {
     suspend fun search(q: String, type: String, page: Int, sort: String = "relevance"): PagedItems {
         val query = mapOf("q" to q, "type" to type, "page" to page.toString(), "sort" to sort)
         return withCache("search", query, ApiParser::parseList) {
-            api.search(q, type, page, PAGE_SIZE, sort, token)
+            api.searchRaw(q, type, page, PAGE_SIZE, sort, token)
         }
     }
 
     suspend fun categories(): List<Category> = withCache("categories", emptyMap(), ApiParser::parseCategories) {
-        api.categories()
+        api.categoriesRaw()
     }
 
     suspend fun about(): AboutPage = withCache("about", emptyMap(), ApiParser::parseAbout) {
-        api.about()
+        api.aboutRaw()
     }
 
     suspend fun contactPage(): ContactPage = api.contactPage()

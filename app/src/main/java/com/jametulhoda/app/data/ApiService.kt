@@ -5,6 +5,7 @@ import org.json.JSONObject
 /**
  * سرویس تایپ‌شدهٔ /api/mobile — همان قرارداد `docs/MOBILE-API.md`.
  * هیچ مسیری خارج از allowlist سرور استفاده نمی‌شود.
+ * متدهای `Raw` پاسخ JSON خام را برمی‌گردانند (برای کش stale-fallback در Repository).
  */
 class ApiService(private val client: ApiClient) {
 
@@ -21,9 +22,12 @@ class ApiService(private val client: ApiClient) {
         }
     }
 
-    suspend fun home(token: String?): HomeData = ApiParser.parseHome(ok(client.get("/api/mobile/home", mapOf("limit" to "8"), token)))
+    suspend fun homeRaw(token: String?): JSONObject =
+        ok(client.get("/api/mobile/home", mapOf("limit" to "8"), token))
 
-    suspend fun posts(type: String, page: Int, perPage: Int, search: String = "", topic: Int = 0, category: Int = 0, token: String? = null): PagedItems {
+    suspend fun home(token: String?): HomeData = ApiParser.parseHome(homeRaw(token))
+
+    private fun postQuery(type: String, page: Int, perPage: Int, search: String, topic: Int, category: Int): HashMap<String, String> {
         val query = HashMap<String, String>()
         query["type"] = type
         query["page"] = page.toString()
@@ -31,8 +35,14 @@ class ApiService(private val client: ApiClient) {
         if (search.isNotEmpty()) query["search"] = search
         if (topic > 0) query["topic"] = topic.toString()
         if (category > 0) query["category"] = category.toString()
-        return ApiParser.parseList(ok(client.get("/api/mobile/posts", query, token)))
+        return query
     }
+
+    suspend fun postsRaw(type: String, page: Int, perPage: Int, search: String = "", topic: Int = 0, category: Int = 0, token: String? = null): JSONObject =
+        ok(client.get("/api/mobile/posts", postQuery(type, page, perPage, search, topic, category), token))
+
+    suspend fun posts(type: String, page: Int, perPage: Int, search: String = "", topic: Int = 0, category: Int = 0, token: String? = null): PagedItems =
+        ApiParser.parseList(postsRaw(type, page, perPage, search, topic, category, token))
 
     suspend fun post(id: Int = 0, slug: String = "", token: String? = null): ContentItem {
         val query = HashMap<String, String>()
@@ -40,14 +50,20 @@ class ApiService(private val client: ApiClient) {
         return ApiParser.parseItemPayload(ok(client.get("/api/mobile/post", query, token)))
     }
 
-    suspend fun books(page: Int, perPage: Int, search: String = "", topic: Int = 0, token: String? = null): PagedItems {
+    private fun bookQuery(page: Int, perPage: Int, search: String, topic: Int): HashMap<String, String> {
         val query = HashMap<String, String>()
         query["page"] = page.toString()
         query["per_page"] = perPage.toString()
         if (search.isNotEmpty()) query["search"] = search
         if (topic > 0) query["topic"] = topic.toString()
-        return ApiParser.parseList(ok(client.get("/api/mobile/books", query, token)))
+        return query
     }
+
+    suspend fun booksRaw(page: Int, perPage: Int, search: String = "", topic: Int = 0, token: String? = null): JSONObject =
+        ok(client.get("/api/mobile/books", bookQuery(page, perPage, search, topic), token))
+
+    suspend fun books(page: Int, perPage: Int, search: String = "", topic: Int = 0, token: String? = null): PagedItems =
+        ApiParser.parseList(booksRaw(page, perPage, search, topic, token))
 
     suspend fun book(id: Int = 0, slug: String = "", token: String? = null): ContentItem {
         val query = HashMap<String, String>()
@@ -55,17 +71,25 @@ class ApiService(private val client: ApiClient) {
         return ApiParser.parseItemPayload(ok(client.get("/api/mobile/book", query, token)))
     }
 
-    suspend fun collections(): List<Collection> = ApiParser.parseCollections(ok(client.get("/api/mobile/collections")))
+    suspend fun collectionsRaw(): JSONObject = ok(client.get("/api/mobile/collections"))
 
-    suspend fun lessons(page: Int, perPage: Int, collection: Int = 0, volume: Int = 0, search: String = "", token: String? = null): PagedItems {
+    suspend fun collections(): List<Collection> = ApiParser.parseCollections(collectionsRaw())
+
+    private fun lessonQuery(page: Int, perPage: Int, collection: Int, volume: Int, search: String): HashMap<String, String> {
         val query = HashMap<String, String>()
         query["page"] = page.toString()
         query["per_page"] = perPage.toString()
         if (collection > 0) query["collection"] = collection.toString()
         if (volume > 0) query["volume"] = volume.toString()
         if (search.isNotEmpty()) query["search"] = search
-        return ApiParser.parseList(ok(client.get("/api/mobile/lessons", query, token)))
+        return query
     }
+
+    suspend fun lessonsRaw(page: Int, perPage: Int, collection: Int = 0, volume: Int = 0, search: String = "", token: String? = null): JSONObject =
+        ok(client.get("/api/mobile/lessons", lessonQuery(page, perPage, collection, volume, search), token))
+
+    suspend fun lessons(page: Int, perPage: Int, collection: Int = 0, volume: Int = 0, search: String = "", token: String? = null): PagedItems =
+        ApiParser.parseList(lessonsRaw(page, perPage, collection, volume, search, token))
 
     suspend fun lesson(id: Int = 0, slug: String = "", token: String? = null): ContentItem {
         val query = HashMap<String, String>()
@@ -84,13 +108,16 @@ class ApiService(private val client: ApiClient) {
         return ApiParser.parseItemPayload(ok(client.get("/api/mobile/topic", query, token)))
     }
 
-    suspend fun media(kind: String, page: Int, perPage: Int, token: String? = null): PagedItems {
+    suspend fun mediaRaw(kind: String, page: Int, perPage: Int, token: String? = null): JSONObject {
         val query = HashMap<String, String>()
         query["kind"] = kind
         query["page"] = page.toString()
         query["per_page"] = perPage.toString()
-        return ApiParser.parseList(ok(client.get("/api/mobile/media", query, token)))
+        return ok(client.get("/api/mobile/media", query, token))
     }
+
+    suspend fun media(kind: String, page: Int, perPage: Int, token: String? = null): PagedItems =
+        ApiParser.parseList(mediaRaw(kind, page, perPage, token))
 
     suspend fun mediaItem(kind: String, id: Int, token: String? = null): ContentItem {
         val query = HashMap<String, String>()
@@ -99,19 +126,26 @@ class ApiService(private val client: ApiClient) {
         return ApiParser.parseItemPayload(ok(client.get("/api/mobile/media-item", query, token)))
     }
 
-    suspend fun search(q: String, type: String, page: Int, perPage: Int, sort: String = "relevance", token: String? = null): PagedItems {
+    suspend fun searchRaw(q: String, type: String, page: Int, perPage: Int, sort: String = "relevance", token: String? = null): JSONObject {
         val query = HashMap<String, String>()
         query["q"] = q
         query["type"] = type
         query["page"] = page.toString()
         query["per_page"] = perPage.toString()
         query["sort"] = sort
-        return ApiParser.parseList(ok(client.get("/api/mobile/search", query, token)))
+        return ok(client.get("/api/mobile/search", query, token))
     }
 
-    suspend fun categories(): List<Category> = ApiParser.parseCategories(ok(client.get("/api/mobile/categories")))
+    suspend fun search(q: String, type: String, page: Int, perPage: Int, sort: String = "relevance", token: String? = null): PagedItems =
+        ApiParser.parseList(searchRaw(q, type, page, perPage, sort, token))
 
-    suspend fun about(): AboutPage = ApiParser.parseAbout(ok(client.get("/api/mobile/pages", mapOf("page" to "about"))))
+    suspend fun categoriesRaw(): JSONObject = ok(client.get("/api/mobile/categories"))
+
+    suspend fun categories(): List<Category> = ApiParser.parseCategories(categoriesRaw())
+
+    suspend fun aboutRaw(): JSONObject = ok(client.get("/api/mobile/pages", mapOf("page" to "about")))
+
+    suspend fun about(): AboutPage = ApiParser.parseAbout(aboutRaw())
 
     suspend fun contactPage(): ContactPage = ApiParser.parseContact(ok(client.get("/api/mobile/pages", mapOf("page" to "contact"))))
 
